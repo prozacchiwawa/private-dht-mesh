@@ -1,3 +1,4 @@
 #!/bin/sh
 
-exec node -e 'require("./out/test.js").test.main()'
+mocha ./out/test.js
+

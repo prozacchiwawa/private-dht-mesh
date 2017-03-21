@@ -10,3 +10,6 @@ out/index.js: $(call SOURCES,src/index.fsx)
 
 out/test.js: $(call SOURCES,test/test.fsx)
 	$(call FABLE,$<)
+
+test: tests
+	./test.sh
