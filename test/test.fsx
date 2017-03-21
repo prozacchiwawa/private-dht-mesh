@@ -13,16 +13,56 @@
 
 open Util
 open MochaTest
+open Forward
 
 type DoneF = unit -> unit
 type It = string * (DoneF -> unit)
 
 let (=>) (a : string) (b : 'b) : (string * 'b) = (a,b)
 
+let basicNodeA = { local = true ; target = "169.254.1.2" ; id = "testA" }
+let basicNodeB = { local = true ; target = "169.254.1.3" ; id = "testB" }
+
+let final f _ = f ()
+
 let tests : (string * (It list)) list =
   [ "forward" => 
       [ "should be creatable" =>
           fun donef -> let i = Forward.init () in donef ()
+      ; "should allow addition of nodes" =>
+          fun donef ->
+            let i = Forward.init () in
+            begin
+              i |> Forward.addNode basicNodeA |> final donef
+            end
+      ; "should allow addition of edges" =>
+          fun donef ->
+            let i = Forward.init () in
+            begin
+              i
+              |> Forward.addNode basicNodeA
+              |> Forward.addNode basicNodeB
+              |> Forward.addEdge basicNodeA.id basicNodeB.id
+              |> final donef 
+            end
+      ; "should know if two nodes are connected" =>
+          fun donef ->
+            let i =
+              Forward.init ()
+              |> Forward.addNode basicNodeA
+              |> Forward.addNode basicNodeB
+              |> Forward.addEdge basicNodeA.id basicNodeB.id
+            in
+            begin
+              massert.ok (i |> Forward.connected basicNodeA.id basicNodeB.id) ;
+              massert.ok
+                (i 
+                 |> Forward.removeEdge basicNodeA.id basicNodeB.id
+                 |> Forward.connected basicNodeA.id basicNodeB.id
+                 |> not
+                ) ;
+              donef ()
+            end
       ]
   ]
 
