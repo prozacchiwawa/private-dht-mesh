@@ -23,6 +23,8 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
  *)
 
+open Util
+
 module Constants =
   let DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET = 20
   let DEFAULT_NUMBER_OF_NODES_TO_PING = 3
@@ -69,9 +71,9 @@ let optionDefLazy (f : unit -> 'a) (o : 'a option) =
 
 let arrayRemove (at : int) (n : int) (a : 'a array) : 'a array =
   Seq.mapi (fun i e -> (i,e)) a
-|> Seq.filter (fun (i,e) -> i >= at && i < at + n)
-|> Seq.map (fun (i,e) -> e)
-|> Array.ofSeq
+  |> Seq.filter (fun (i,e) -> i < at || i >= at + n)
+  |> Seq.map (fun (i,e) -> e)
+  |> Array.ofSeq
 
 let asl v s = v <<< s 
 (* let asr v s = v >>> s *)
@@ -101,10 +103,7 @@ let indexOfId ops self id =
   | Some bucket ->
      bucket
      |> Seq.mapi (fun i c -> (i,c))
-     |> Seq.skipWhile
-          (fun (i,c) ->
-            not (ops.idEqual id (ops.nodeId c))
-          )
+     |> Seq.skipWhile (fun (i,c) -> not (ops.idEqual id (ops.nodeId c)))
      |> Seq.truncate 1
      |> Seq.map (fun (i,c) -> i)
      |> List.ofSeq
@@ -461,9 +460,10 @@ let update (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (contact : '
   match self.bucket with
   | Some bucket ->
      begin
-       if not (ops.idEqual (ops.nodeId bucket.[index]) (ops.nodeId contact)) then
-         failwith "indexOf() calculation resulted in wrong index" ;
-
+       let _ =
+         if not (ops.idEqual (ops.nodeId bucket.[index]) (ops.nodeId contact)) then
+           failwith "indexOf() calculation resulted in wrong index"
+       in
        let incumbent = bucket.[index] in
        let selection = ops.arbiter incumbent contact in
        if selection = incumbent && incumbent <> contact then

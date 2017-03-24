@@ -43,6 +43,15 @@ type KBucketNode = { id : Buffer }
 let newContact (b : string) : KBucketNode =
   { id = nodeId b }
 
+let kbOps : KBucketAbstract<Buffer,KBucketNode> =
+  { distance = KBucket.defaultDistance
+  ; nodeId = fun a -> a.id
+  ; arbiter = fun (a : KBucketNode) (b : KBucketNode) -> a
+  ; keyLength = Buffer.length
+  ; keyNth = Buffer.at
+  ; idEqual = Buffer.equal
+  }
+
 let tests : (string * (It list)) list =
   [ "forward" => 
       [ "should be creatable" =>
@@ -85,35 +94,25 @@ let tests : (string * (It list)) list =
   ; "k-bucket" =>
       [ "adding a contact places it in a bucket" =>
           fun donef ->
-            let kbOps : KBucketAbstract<Buffer,KBucketNode> =
-              { distance = KBucket.defaultDistance
-              ; nodeId = fun a -> a.id
-              ; arbiter = fun (a : KBucketNode) (b : KBucketNode) -> a
-              ; keyLength = Buffer.length
-              ; keyNth = Buffer.at
-              ; idEqual = Buffer.equal
-              }
-            in
             let id = ShortId.generate () in
             let kb = KBucket.init (nodeId id) in
             let contact = newContact "a" in
             let (kb2,_) = KBucket.add kbOps kb contact None in
             massert.ok (kb2.bucket = Some [|contact|]) ;
             donef ()
+      ; "adding an existing contact does not increase number of contacts in bucket" =>
+          fun donef ->
+            let id = ShortId.generate () in
+            let kb = KBucket.init (nodeId id) in
+            let contact = newContact "a" in
+            let ct2 = newContact "a" in
+            let (kb2,_) = KBucket.add kbOps kb contact None in
+            let (kb3,_) = KBucket.add kbOps kb2 ct2 None in
+            massert.ok ((kb3.bucket |> optionMap Array.length) = Some 1) ;
+            donef ()
+
 
 (*
-
-test['adding an existing contact does not increase number of contacts in ' +
-     'bucket' ] = function (test) {
-    test.expect(1);
-    var kBucket = new KBucket();
-    var contact = {id: new Buffer("a")};
-    kBucket.add(contact);
-    kBucket.add({id: new Buffer("a")});
-    test.equal(kBucket.bucket.length, 1);
-    test.done();
-                             };
-
 test['adding same contact moves it to the end of the bucket ' +
      '(most-recently-contacted end)'] = function (test) {
     test.expect(5);
