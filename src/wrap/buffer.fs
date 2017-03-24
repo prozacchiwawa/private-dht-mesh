@@ -2,7 +2,12 @@ module Buffer
 
 open Fable.Core
 
-type Buffer = { length : int }
+[<Import("*","buffer")>]
+module buffer =
+  type Buffer =
+    abstract member length : int
+
+type Buffer = buffer.Buffer
 
 [<Emit("$0.length.valueOf()")>]
 let length : Buffer -> int = fun b -> failwith "JS only"
@@ -16,7 +21,7 @@ let fromArray : int array -> Buffer = fun a -> failwith "JS only"
 [<Emit("$0")>]
 let toArray : Buffer -> int array = fun a -> failwith "JS only"
 
-[<Emit("new Buffer($0,$1)")>]
+[<Emit("(function (txt,enc) { var b = new Buffer(txt,enc); return b; })($0,$1)")>]
 let fromString : string -> string -> Buffer = fun s e -> failwith "JS only"
 
 [<Emit("$1.toString($0)")>]

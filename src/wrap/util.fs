@@ -82,6 +82,11 @@ let optionMap f o =
   | Some a -> Some (f a)
   | None -> None
 
+let optionFilter f o =
+  match o with
+  | Some a -> if f a then Some a else None
+  | None -> None
+
 let optionThen f o =
   match o with
   | Some a -> f a
