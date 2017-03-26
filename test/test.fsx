@@ -40,13 +40,16 @@ let nodeId (b : string) : Buffer =
 
 type KBucketNode = { id : Buffer }
 
-let newContact (b : string) : KBucketNode =
+let newContactString (b : string) : KBucketNode =
   { id = nodeId b }
+
+let newContactBuffer (b : Buffer) : KBucketNode =
+  { id = b }
 
 let kbOps : KBucketAbstract<Buffer,KBucketNode> =
   { distance = KBucket.defaultDistance
   ; nodeId = fun a -> a.id
-  ; arbiter = fun (a : KBucketNode) (b : KBucketNode) -> a
+  ; arbiter = fun (a : KBucketNode) (b : KBucketNode) -> b
   ; keyLength = Buffer.length
   ; keyNth = Buffer.at
   ; idEqual = Buffer.equal
@@ -96,7 +99,7 @@ let tests : (string * (It list)) list =
           fun donef ->
             let id = ShortId.generate () in
             let kb = KBucket.init (nodeId id) in
-            let contact = newContact "a" in
+            let contact = newContactString "a" in
             let (kb2,_) = KBucket.add kbOps kb contact None in
             massert.ok (kb2.bucket = Some [|contact|]) ;
             donef ()
@@ -104,56 +107,72 @@ let tests : (string * (It list)) list =
           fun donef ->
             let id = ShortId.generate () in
             let kb = KBucket.init (nodeId id) in
-            let contact = newContact "a" in
-            let ct2 = newContact "a" in
+            let contact = newContactString "a" in
+            let ct2 = newContactString "a" in
             let (kb2,_) = KBucket.add kbOps kb contact None in
             let (kb3,_) = KBucket.add kbOps kb2 ct2 None in
             massert.ok ((kb3.bucket |> optionMap Array.length) = Some 1) ;
             donef ()
 
+      ; "adding same contact moves it to the end of the bucket (most-recently-contacted end)" =>
+          fun donef ->
+            let id = ShortId.generate () in
+            let kb = KBucket.init (nodeId id) in
+            let contact = newContactString "a" in
+            let (kb2,_) = KBucket.add kbOps kb contact None in
+            let _ = massert.ok ((kb2.bucket |> optionMap Array.length) = Some 1) in
+            let (kb3,_) = KBucket.add kbOps kb2 (newContactString "b") None in
+            let _ = massert.ok ((kb3.bucket |> optionMap Array.length) = Some 2) in
+            let _ =
+              massert.ok
+                ((kb3.bucket |> optionMap (fun a -> a.[0])) =
+                   (Some contact))
+            in
+            let (kb4,_) = KBucket.add kbOps kb3 contact None in
+            let _ = massert.ok ((kb4.bucket |> optionMap Array.length) = Some 2) in
+            let _ =
+              massert.ok
+                ((kb4.bucket |> optionMap (fun a -> a.[1])) =
+                   (Some contact))
+            in
+            donef ()
 
-(*
-test['adding same contact moves it to the end of the bucket ' +
-     '(most-recently-contacted end)'] = function (test) {
-    test.expect(5);
-    var kBucket = new KBucket();
-    var contact = {id: new Buffer("a")};
-    kBucket.add(contact);
-    test.equal(kBucket.bucket.length, 1);
-    kBucket.add({id: new Buffer("b")});
-    test.equal(kBucket.bucket.length, 2);
-    test.equal(kBucket.bucket[0], contact); // least-recently-contacted end
-    kBucket.add(contact);
-    test.equal(kBucket.bucket.length, 2);
-    test.equal(kBucket.bucket[1], contact); // most-recently-contacted end
-    test.done();
-                                                   };
-
-test['adding contact to bucket that can\'t be split results in emitting' +
-     ' "ping" event'] = function (test) {
-    var i, iString, j;
-    test.expect(constants.DEFAULT_NUMBER_OF_NODES_TO_PING + 2);
-    var kBucket = new KBucket({localNodeId: new Buffer('0000', 'hex')});
-    kBucket.on('ping', function (contacts, replacement) {
-        test.equal(contacts.length, constants.DEFAULT_NUMBER_OF_NODES_TO_PING);
-        // console.dir(kBucket.high.bucket[0]);
-        for (var i = 0; i < constants.DEFAULT_NUMBER_OF_NODES_TO_PING; i++) {
-            // the least recently contacted end of the bucket should be pinged
-            test.equal(contacts[i], kBucket.high.bucket[i]);
-              }
-        test.deepEqual(replacement, {id: new Buffer(iString, 'hex')})
-        test.done();
-                                  });
-    for (var j = 0; j < constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET + 1; j++) {
-        iString = j.toString('16');
-        if (iString.length < 2) {
-            iString = '0' + iString;
-             }
-        iString = '80' + iString; // make sure all go into "far away" bucket
-        kBucket.add({id: new Buffer(iString, 'hex')});
-          }
-                                   };        
- *)
+      ; "adding contact to bucket that can\'t be split results in emitting \"ping\" event" =>
+          fun donef ->
+            let id = Buffer.fromArray [| 0; 0 |] in
+            let kb = ref (KBucket.init id) in
+            let pings = ref [| |] in
+            for j = 0 to KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET do
+              begin
+                let iString = [| 0x80; j |] in
+                let (kbu,p) = KBucket.add kbOps !kb (newContactBuffer (Buffer.fromArray iString)) None in
+                kb := kbu ;
+                pings := Seq.concat [p |> List.toSeq;!pings |> Array.toSeq] |> Array.ofSeq ;
+              end ;
+            let _ =
+              match !pings with
+              | [|Ping (contacts, replacement)|] ->
+                 massert.ok ((Seq.length contacts) = KBucket.Constants.DEFAULT_NUMBER_OF_NODES_TO_PING)
+              | _ -> massert.fail true
+            in
+            !pings
+            |> Seq.mapi
+                 (fun i a ->
+                   match (a, (!kb).high) with
+                   | (Ping (contacts, replacement), Some high) ->
+                      begin
+                        let iString = [| 0x80; i |] in
+                        match high.bucket with
+                        | Some bucket ->
+                           massert.ok ((Array.ofSeq contacts).[i] = bucket.[i]) ;
+                           massert.ok 
+                             (newContactBuffer (Buffer.fromArray iString) =
+                                replacement) ;
+                        | _ -> (massert.ok false ; donef ())
+                      end
+                   | _ -> (massert.ok false ; donef ())
+                 )
+            |> (fun _ -> donef ())
       ]
   ]
 

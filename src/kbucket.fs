@@ -47,7 +47,7 @@ type KBucketAbstract<'id,'a> =
   }
 
 type Action<'id,'a> =
-  | Ping of ('a * 'a array)
+  | Ping of ('a array * 'a)
 
 let optionMap (f : 'a -> 'b) (o : 'a option) =
   match o with
@@ -126,7 +126,7 @@ let defaultDistance (ops : KBucketAbstract<'id,'a>) (firstId : 'id) (secondId : 
   let ll = ops.keyLength longer in
   let sl = ops.keyLength shorter in
   let accumulator = Array.zeroCreate ll in
-  for i = 0 to ll - 1 do
+  for i = 0 to ll do
     begin
       let idx = ll - i - 1 in
       if i >= sl then
@@ -189,29 +189,23 @@ let rec addInternal
       (bitIndexOpt : int option) : (KBucket<'id,'a> * Action<'id,'a> list) =
   let bitIndex = bitIndexOpt |> optionDefault 0 in
   let bitIndexPP = bitIndex + 1 in
-  match self.bucket with
-  | None ->
-      if (determineBucket ops self (ops.nodeId contact) (Some (bitIndexPP - 1))) > 0 then
+  match (self.bucket, self.low, self.high) with
+  | (None, Some low, Some high) ->
+      if (determineBucket ops self (ops.nodeId contact) (Some (bitIndexPP - 1))) < 0 then
         (* this is not a leaf node but an inner node with 'low' and 'high'
         // branches; we will check the appropriate bit of the identifier and
         // delegate to the appropriate node for further processing
         *)
-        match self.low with
-        | None -> failwith "Expected low"
-        | Some l ->
-            intr.addInternal ops intr l contact (Some bitIndex) &+
-              (fun low ->
-                { self with low = Some low } &> []
-              )
+        intr.addInternal ops intr low contact (Some bitIndex) &+
+          (fun low ->
+            { self with low = Some low } &> []
+          )
       else
-        match self.high with
-        | None -> failwith "Expected high"
-        | Some h ->
-            intr.addInternal ops intr h contact (Some bitIndex) &+
-              (fun high ->
-                { self with high = Some high } &> []
-              )
-  | Some bucket ->
+        intr.addInternal ops intr high contact (Some bitIndex) &+
+          (fun high ->
+            { self with high = Some high } &> []
+          )
+  | (Some bucket, _, _) ->
       (* Check if the contact already exists *)
       let index = indexOf ops self contact in
       if index >= 0 then
@@ -228,9 +222,10 @@ let rec addInternal
           // be added (this prevents DoS flodding with new invalid contacts)
           *)
           self &>
-             [Ping (contact, Array.sub bucket 0 Constants.DEFAULT_NUMBER_OF_NODES_TO_PING)]
+             [Ping (Array.sub bucket 0 Constants.DEFAULT_NUMBER_OF_NODES_TO_PING, contact)]
         else
           intr.splitAndAddInternal ops intr self contact (Some bitIndex)
+  | _ -> failwith "Expected bucket or low,high"
 
 (* contact: Object *required* contact object
 // id: Buffer *require* node id
@@ -367,70 +362,50 @@ let rec splitAndAddInternal
     (contact : 'a)
     (bitIndexOpt : int option) =
   let bitIndex = bitIndexOpt |> optionDefault 0 in
-  let candidateLow =
-    { localNodeId = self.localNodeId
-    ; bucket = None
-    ; dontSplit = false
-    ; low = None
-    ; high = None
-    }
-  in
-  let candidateHigh =
-    { localNodeId = self.localNodeId
-    ; bucket = None
-    ; dontSplit = false
-    ; low = None
-    ; high = None
-    }
-  in
-  let self0 = { self with bucket = None ; low = Some candidateLow ; high = Some candidateHigh } in
-  (* redistribute existing contacts amongst the two newly created buckets *)
-  Seq.fold
-    (fun self storedContact ->
-      let self1 =
-        self &+
-          (fun self ->
-            if determineBucket ops self (ops.nodeId storedContact) (Some bitIndex) < 0 then
-              match self.low with
-              | Some low ->
-                  (addInternal ops intr low storedContact None) &+
-                    (fun low -> { self with low = Some low } &> [])
-              | _ -> failwith "Expected low"
-            else
-              match self.high with
-              | Some high ->
-                  (addInternal ops intr high storedContact None) &+
-                    (fun high -> { self with high = Some high } &> [])
-              | _ -> failwith "Expected high"
-          )
-      in
-
-      (* don't split the "far away" bucket
-      // we check where the local node would end up and mark the other one as
-      // "dontSplit" (i.e. "far away")
-      *)
-      let self2 =
-        self1 &+
-          (fun self ->
-            if determineBucket ops self self.localNodeId (Some bitIndex) < 0 then
-              (* local node belongs to "low" bucket, so mark the other one *)
-              match self.high with
-              | Some high ->
-                  { self with high = Some { high with dontSplit = true } } &> []
-              | None -> failwith "Expected high"
-            else
-              match self.low with
-              | Some low ->
-                  { self with low = Some { low with dontSplit = true } } &> []
-              | None -> failwith "Expected low"
-          )
-      in
-
-      (* add the contact being added *)
-      self2 &+ (fun self -> addInternal ops intr self contact (Some bitIndex))
-    )
-    (self0 &> [])
-    (self0.bucket |> optionDefault [||])
+  match (self.bucket, self.low, self.high) with
+  | (Some bucket, None, None) ->
+     let newLowBucket =
+       Array.filter
+         (fun storedContact ->
+           determineBucket ops self (ops.nodeId storedContact) (Some bitIndex) < 0
+         )
+         bucket
+     in
+     let newHighBucket =
+       Array.filter
+         (fun storedContact ->
+           determineBucket ops self (ops.nodeId storedContact) (Some bitIndex) >= 0
+         )
+         bucket
+     in
+     (* don't split the "far away" bucket
+     // we check where the local node would end up and mark the other one as
+     // "dontSplit" (i.e. "far away")
+     *)
+     let whichBucketIsFar =
+       determineBucket ops self self.localNodeId (Some bitIndex) < 0
+     in
+     let splitSelf =
+       { self with
+         bucket = None ;
+         low =
+           Some
+             { init self.localNodeId with
+               bucket = Some newLowBucket ;
+               dontSplit = not whichBucketIsFar
+             } ;
+         high =
+           Some
+             { init self.localNodeId with
+               bucket = Some newHighBucket ;
+               dontSplit = whichBucketIsFar
+             }
+       }
+     in
+     (* add the contact being added *)
+     addInternal ops intr splitSelf contact (Some bitIndex)
+  | _ -> failwith "Expected bucket"
+      
 
 (* Returns all the contacts contained in the tree as an array.
 // If self is a leaf, return a copy of the bucket. `slice` is used so that we
