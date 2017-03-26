@@ -33,6 +33,9 @@ let at : int -> Buffer -> int = fun i b -> failwith "JS only"
 [<Emit("$0.equals($1)")>]
 let equal : Buffer -> Buffer -> bool = fun a b -> failwith "JS only"
 
+[<Emit("$0.compare($1)")>]
+let compare : Buffer -> Buffer -> int = fun a b -> failwith "JS only"
+
 [<Emit("$2.slice($0,$1)")>]
 let slice : int -> int -> Buffer -> Buffer = fun s e b -> failwith "JS only"
 

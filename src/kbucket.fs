@@ -44,6 +44,7 @@ type KBucketAbstract<'id,'a> =
   ; keyLength : 'id -> int
   ; keyNth : int -> 'id -> int
   ; idEqual : 'id -> 'id -> bool
+  ; idLess : 'id -> 'id -> bool
   }
 
 type Action<'id,'a> =
@@ -238,37 +239,32 @@ let rec closest
       (self : KBucket<'id,'a>)
       (contact : 'a)
       (n : int)
-      (bitIndexOpt : int option) : ('a array * Action<'id,'a> list) =
+      (bitIndexOpt : int option) : 'a array =
   let contacts = ref [||] in
-  let actions = ref [] in
   let bitIndex = bitIndexOpt |> optionDefault 0 in
   match (self.bucket, self.low, self.high) with
   | (None, Some low, Some high) ->
       let _ =
         if determineBucket ops self (ops.nodeId contact) (Some bitIndex) < 0 then
           begin
-            let (contactsVal,newActions) = closest ops low contact n (Some bitIndex) in
-            let _ = actions := !actions @ newActions in
+            let contactsVal = closest ops low contact n (Some bitIndex) in
             if Array.length contactsVal < n then
-              let (contactsVal2,newActions2) = closest ops high contact n (Some bitIndex) in
-              let _ = actions := !actions @ newActions2 in
+              let contactsVal2 = closest ops high contact n (Some bitIndex) in
               contacts := Array.append !contacts (Array.append contactsVal contactsVal2)
             else
               contacts := Array.append !contacts contactsVal
           end
         else
           begin
-            let (contactsVal,newActions) = closest ops high contact n (Some bitIndex) in
-            let _ = actions := !actions @ newActions in
+            let contactsVal = closest ops high contact n (Some bitIndex) in
             if Array.length contactsVal < n then
-              let (contactsVal2,newActions2) = closest ops low contact n (Some bitIndex) in
-              let _ = actions := !actions @ newActions2 in
+              let contactsVal2 = closest ops low contact n (Some bitIndex) in
               contacts := Array.append !contacts (Array.append contactsVal contactsVal2)
             else
               contacts := Array.append !contacts contactsVal
           end
       in
-      (Array.sub !contacts 0 n) &> !actions
+      (Array.sub !contacts 0 n)
   | (Some bucket, _, _) ->
       let _ = contacts := bucket in
       let distances =
@@ -277,9 +273,9 @@ let rec closest
           !contacts
       in
       let _ =
-        contacts := Array.sortWith (fun a b -> if a < b then -1 else if b < a then 1 else 0) !contacts
+        contacts := Array.sortWith (fun a b -> if ops.idLess (ops.nodeId a) (ops.nodeId b) then -1 else if ops.idLess (ops.nodeId b) (ops.nodeId a) then 1 else 0) !contacts
       in
-      (Array.sub !contacts 0 n) &> !actions
+      (Array.sub !contacts 0 n)
   | _ -> failwith "Expected bucket or low and high"
 
 (* Counts the number of contacts recursively.
