@@ -262,47 +262,52 @@ let tests =
           ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x40|]) (Some 0)) =
              -1) ;
         donef ()
-(*
-test['id 01000000, bitIndex 1, should be high'] = function (test) {
-    test.expect(1);
-    var kBucket = new KBucket();
-    test.equal(kBucket.determineBucket(new Buffer("40", "hex"), 1), 1);
-    test.done();
-};
 
-test['id 01000000, bitIndex 2, should be low'] = function (test) {
-    test.expect(1);
-    var kBucket = new KBucket();
-    test.equal(kBucket.determineBucket(new Buffer("40", "hex"), 2), -1);
-    test.done();
-};
+  ; "id 01000000, bitIndex 1, should be high" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok
+          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x40|]) (Some 1)) =
+             1) ;
+        donef ()
 
-test['id 01000000, bitIndex 9, should be low'] = function (test) {
-    test.expect(1);
-    var kBucket = new KBucket();
-    test.equal(kBucket.determineBucket(new Buffer("40", "hex"), 9), -1);
-    test.done();
-};
+  ; "id 01000000, bitIndex 2, should be low" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok
+          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x40|]) (Some 2)) =
+             -1) ;
+        donef ()
 
-test['id 01000001, bitIndex 7, should be high'] = function (test) {
-    test.expect(1);
-    var kBucket = new KBucket();
-    test.equal(kBucket.determineBucket(new Buffer("41", "hex"), 7), 1);
-    test.done();
-};
+  ; "id 01000000, bitIndex 9, should be low" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok
+          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x40|]) (Some 9)) =
+             -1) ;
+        donef ()
 
-test['id 0100000100000000, bitIndex 7, should be high'] = function (test) {
-    test.expect(1);
-    var kBucket = new KBucket();
-    test.equal(kBucket.determineBucket(new Buffer("4100", "hex"), 7), 1);
-    test.done();
-};
+  ; "id 01000001, bitIndex 7, should be high" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok
+          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x41|]) (Some 7)) =
+             1) ;
+        donef ()
 
-test['id 000000000100000100000000, bitIndex 15, should be high'] = function (test) {
-    test.expect(1);
-    var kBucket = new KBucket();
-    test.equal(kBucket.determineBucket(new Buffer("004100", "hex"), 15), 1);
-    test.done();
-};
- *)
+  ; "id 0100000100000000, bitIndex 7, should be high" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok
+          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x41;0|]) (Some 7)) =
+             1) ;
+        donef ()
+
+  ; "id 000000000100000100000000, bitIndex 15, should be high" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok
+          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0;41;0|]) (Some 15)) =
+             1) ;
+        donef ()
   ]
