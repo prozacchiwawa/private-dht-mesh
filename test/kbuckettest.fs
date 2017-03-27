@@ -255,14 +255,14 @@ let tests =
              -1) ;
         donef ()
 
+  ; "id 01000000, bitIndex 0, should be low" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok
+          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x40|]) (Some 0)) =
+             -1) ;
+        donef ()
 (*
-test['id 01000000, bitIndex 0, should be low'] = function (test) {
-    test.expect(1);
-    var kBucket = new KBucket();
-    test.equal(kBucket.determineBucket(new Buffer("40", "hex"), 0), -1);
-    test.done();
-};
-
 test['id 01000000, bitIndex 1, should be high'] = function (test) {
     test.expect(1);
     var kBucket = new KBucket();
