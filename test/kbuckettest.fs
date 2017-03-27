@@ -193,4 +193,44 @@ let tests =
         let actualList = contacts |> Array.map (fun n -> n.id) in
         massert.ok (expectedList = actualList) ;
         donef ()
+
+  ; "count returns 0 when no contacts in bucket" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok (KBucket.count kb = 0) ;
+        donef ()
+
+  ; "count returns 1 when 1 contact in bucket" =>
+      fun donef ->
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        let contact = newContactString "a" in
+        kbadd kb pings contact ;
+        massert.ok (KBucket.count !kb = 1) ;
+        donef ()
+
+  ; "count returns 1 when same contact added to bucket twice" =>
+      fun donef ->
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        let contact = newContactString "a" in
+        kbadd kb pings contact ;
+        kbadd kb pings contact ;
+        massert.ok (KBucket.count !kb = 1) ;
+        donef ()
+
+  ; "count returns number of added unique contacts" =>
+      fun donef ->
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        let _ =
+          Seq.fold
+            (fun _ str ->
+              kbadd kb pings (newContactString str)
+            )
+            ()
+            [ "a" ; "a" ; "b" ; "b" ; "c" ; "d" ; "c" ; "d" ; "e" ; "f" ]
+        in
+        massert.ok (KBucket.count !kb = 6) ;
+        donef ()
   ]
