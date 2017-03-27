@@ -7,7 +7,7 @@ open KBucket
 let (=>) (a : string) (b : 'b) : (string * 'b) = (a,b)
 
 let nodeId (b : string) : Buffer =
-  let hasher = Crypto.createHash "sha256" in
+  let hasher = Crypto.createHash "sha1" in
   let bBuf = Buffer.fromString b "utf-8" in
   let _ = Crypto.updateBuffer bBuf hasher in
   let digest = Crypto.digestBuffer hasher in
@@ -233,4 +233,76 @@ let tests =
         in
         massert.ok (KBucket.count !kb = 6) ;
         donef ()
+
+  ; "localNodeId should be a random SHA-1 if not provided" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok (Buffer.length kb.localNodeId = 20) ;
+        donef ()
+
+  ; "localNodeId is a Buffer populated from options if options.localNodeId Buffer is provided" =>
+      fun donef ->
+        let localNodeId = Buffer.fromString "some length" "utf-8" in
+        let kb = KBucket.init localNodeId in
+        massert.ok (kb.localNodeId = localNodeId) ;
+        donef ()
+
+  ; "id 00000000, bitIndex 0, should be low" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok
+          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0|]) (Some 0)) =
+             -1) ;
+        donef ()
+
+(*
+test['id 01000000, bitIndex 0, should be low'] = function (test) {
+    test.expect(1);
+    var kBucket = new KBucket();
+    test.equal(kBucket.determineBucket(new Buffer("40", "hex"), 0), -1);
+    test.done();
+};
+
+test['id 01000000, bitIndex 1, should be high'] = function (test) {
+    test.expect(1);
+    var kBucket = new KBucket();
+    test.equal(kBucket.determineBucket(new Buffer("40", "hex"), 1), 1);
+    test.done();
+};
+
+test['id 01000000, bitIndex 2, should be low'] = function (test) {
+    test.expect(1);
+    var kBucket = new KBucket();
+    test.equal(kBucket.determineBucket(new Buffer("40", "hex"), 2), -1);
+    test.done();
+};
+
+test['id 01000000, bitIndex 9, should be low'] = function (test) {
+    test.expect(1);
+    var kBucket = new KBucket();
+    test.equal(kBucket.determineBucket(new Buffer("40", "hex"), 9), -1);
+    test.done();
+};
+
+test['id 01000001, bitIndex 7, should be high'] = function (test) {
+    test.expect(1);
+    var kBucket = new KBucket();
+    test.equal(kBucket.determineBucket(new Buffer("41", "hex"), 7), 1);
+    test.done();
+};
+
+test['id 0100000100000000, bitIndex 7, should be high'] = function (test) {
+    test.expect(1);
+    var kBucket = new KBucket();
+    test.equal(kBucket.determineBucket(new Buffer("4100", "hex"), 7), 1);
+    test.done();
+};
+
+test['id 000000000100000100000000, bitIndex 15, should be high'] = function (test) {
+    test.expect(1);
+    var kBucket = new KBucket();
+    test.equal(kBucket.determineBucket(new Buffer("004100", "hex"), 15), 1);
+    test.done();
+};
+ *)
   ]
