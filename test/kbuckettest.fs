@@ -462,21 +462,26 @@ let tests =
         ) ;
         donef ()
 
+  ; (String.concat " "
+       ["adding maximum number of contacts (per K-bucket) + 1 [" ;
+        string (KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET + 1) ;
+        "]" ;
+        " into K-bucket splits the K-bucket"
+       ]
+    ) =>
+      fun donef ->
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        for i = 0 to KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET do
+          begin
+            kbadd kb pings (newContactString (string i))
+          end ;
+        (match ((!kb).bucket,(!kb).low,(!kb).high) with
+         | (None,Some low,Some high) -> massert.ok true
+         | _ -> massert.ok false
+        ) ;
+        donef ()
 (*
-test['adding maximum number of contacts (per K-bucket) + 1 [' +
-     (constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET + 1) + ']' +
-     ' into K-bucket splits the K-bucket'] = function (test) {
-    test.expect(3);
-    var kBucket = new KBucket();
-    for (var i = 0; i < constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET + 1; i++) {
-        kBucket.add({id: new Buffer("" + i)});
-          }
-    test.ok(kBucket.low instanceof KBucket);
-    test.ok(kBucket.high instanceof KBucket);
-    test.ok(!kBucket.bucket);
-    test.done();
-                                                        };
-
 test['split buckets contain all added contacts'] = function (test) {
     test.expect(constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET + 2);
     var kBucket = new KBucket({localNodeId: new Buffer('00', 'hex')});
