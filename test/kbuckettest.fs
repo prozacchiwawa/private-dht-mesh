@@ -372,4 +372,24 @@ let tests =
           (((KBucket.get kbOps !kb finalContactId None)
             |> KBucket.optionMap (fun ctc -> ctc.foo)) = Some "me") ;
         donef ()
+
+  ; "indexOf returns a contact with id that contains the same byte sequence as the test contact" =>
+      fun donef ->
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        let id = nodeId "a" in
+        kbadd kb pings (newContactBuffer id) ;
+        massert.ok
+          ((KBucket.indexOf kbOps !kb (newContactBuffer id)) = 0) ;
+        donef ()
+
+  ; "indexOf returns -1 if contact is not found" =>
+      fun donef ->
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        let id = nodeId "a" in
+        kbadd kb pings (newContactBuffer id) ;
+        massert.ok
+          ((KBucket.indexOf kbOps !kb (newContactBuffer (nodeId "b"))) = -1) ;
+        donef ()
   ]
