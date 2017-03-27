@@ -13,18 +13,20 @@ let nodeId (b : string) : Buffer =
   let digest = Crypto.digestBuffer hasher in
   Buffer.slice 0 20 digest
 
-type KBucketNode = { id : Buffer }
+type KBucketNode = { id : Buffer ; vectorClock : int ; foo : string }
 
 let newContactString (b : string) : KBucketNode =
-  { id = nodeId b }
+  { id = nodeId b ; vectorClock = 0 ; foo = "" }
 
 let newContactBuffer (b : Buffer) : KBucketNode =
-  { id = b }
+  { id = b ; vectorClock = 0 ; foo = "" }
 
 let kbOps : KBucketAbstract<Buffer,KBucketNode> =
   { distance = KBucket.defaultDistance
   ; nodeId = fun a -> a.id
-  ; arbiter = fun (a : KBucketNode) (b : KBucketNode) -> b
+  ; arbiter =
+      fun (a : KBucketNode) (b : KBucketNode) ->
+        if a.vectorClock > b.vectorClock then a else b
   ; keyLength = Buffer.length
   ; keyNth = Buffer.at
   ; idEqual = Buffer.equal
@@ -309,5 +311,65 @@ let tests =
         massert.ok
           ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0;41;0|]) (Some 15)) =
              1) ;
+        donef ()
+
+  ; "get retrieves null if no contacts" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok
+          ((KBucket.get kbOps kb (nodeId "foo") None) = None) ;
+        donef ()
+
+  ; "get retrieves a contact that was added" =>
+      fun donef ->
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        let id = Buffer.fromString "a" "utf-8" in
+        let contact = newContactBuffer id in
+        kbadd kb pings contact ;
+        massert.ok
+          ((KBucket.get kbOps !kb id None) = Some (newContactBuffer id)) ;
+        donef ()
+
+  ; "get retrieves most recently added contact if same id" =>
+      fun donef ->
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        let contact =
+          { newContactString "a" with
+            foo = "foo" ;
+            vectorClock = 0
+          }
+        in
+        let contact2 =
+          { newContactString "a" with
+            foo = "bar" ;
+            vectorClock = 1
+          }
+        in
+        kbadd kb pings contact ;
+        kbadd kb pings contact2 ;
+        massert.ok ((KBucket.get kbOps !kb (nodeId "a") None) = Some contact2) ;
+        donef ()
+
+  ; "get retrieves contact from nested leaf node" =>
+      fun donef ->
+        let kb = ref (KBucket.init (Buffer.fromArray [|0;0|])) in
+        let pings = ref [] in
+        for i = 0 to KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET - 1 do
+          begin
+            let iString = Buffer.fromArray [|0x80;i|] in
+            kbadd kb pings (newContactBuffer iString)
+          end ;
+        let finalContactId = 
+          Buffer.fromArray
+            [|0;0x80;
+              KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET-1
+            |]
+        in
+        kbadd kb pings { newContactBuffer finalContactId with foo = "me" } ;
+        massert.ok
+          (((KBucket.get kbOps !kb finalContactId None)
+            |> KBucket.optionMap (fun ctc -> ctc.foo)) = Some "me") ;
         donef ()
   ]
