@@ -31,6 +31,16 @@ let kbOps : KBucketAbstract<Buffer,KBucketNode> =
   ; idLess = fun a b -> Buffer.compare a b < 0
   }
 
+let kbadd
+      (kb : KBucket<Buffer,KBucketNode> ref )
+      (pings : Action<Buffer,KBucketNode> list ref)
+      (contact : KBucketNode) : unit =
+  let (kbu,pu) = KBucket.add kbOps !kb contact None in
+  begin
+    kb := kbu ;
+    pings := !pings @ pu
+  end
+
 let tests =
   [ "adding a contact places it in a bucket" =>
       fun donef ->
@@ -79,17 +89,15 @@ let tests =
       fun donef ->
         let id = Buffer.fromArray [| 0; 0 |] in
         let kb = ref (KBucket.init id) in
-        let pings = ref [| |] in
+        let pings = ref [] in
         for j = 0 to KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET do
           begin
             let iString = [| 0x80; j |] in
-            let (kbu,p) = KBucket.add kbOps !kb (newContactBuffer (Buffer.fromArray iString)) None in
-            kb := kbu ;
-            pings := Seq.concat [p |> List.toSeq;!pings |> Array.toSeq] |> Array.ofSeq ;
+            kbadd kb pings (newContactBuffer (Buffer.fromArray iString)) ;
           end ;
         let _ =
           match !pings with
-          | [|Ping (contacts, replacement)|] ->
+          | [Ping (contacts, replacement)] ->
              massert.ok ((Seq.length contacts) = KBucket.Constants.DEFAULT_NUMBER_OF_NODES_TO_PING)
           | _ -> massert.fail true
         in
@@ -118,11 +126,7 @@ let tests =
         let pings = ref [] in
         for i = 0 to 0x11 do
           begin
-            let (kbu,pu) =
-              KBucket.add kbOps !kb (newContactBuffer (Buffer.fromArray [|i|])) None
-            in
-            kb := kbu ;
-            pings := !pings @ pu
+            kbadd kb pings (newContactBuffer (Buffer.fromArray [|i|]))
           end ;
         let contact = (newContactBuffer (Buffer.fromArray [|0x15|])) in
         let contacts = KBucket.closest kbOps !kb contact 3 None in
@@ -138,11 +142,7 @@ let tests =
         let pings = ref [] in
         for i = 0 to 0x11 do
           begin
-            let (kbu,pu) =
-              KBucket.add kbOps !kb (newContactBuffer (Buffer.fromArray [|i|])) None
-            in
-            kb := kbu ;
-            pings := !pings @ pu
+            kbadd kb pings (newContactBuffer (Buffer.fromArray [|i|]))
           end ;
         let contact = (newContactBuffer (Buffer.fromArray [|0x11|])) in
         let contacts = KBucket.closest kbOps !kb contact 3 None in
@@ -150,48 +150,47 @@ let tests =
         massert.ok (contacts.[1].id = (Buffer.fromArray [|0x10|])) ;
         massert.ok (contacts.[2].id = (Buffer.fromArray [|0x01|])) ;
         donef ()
-(*
-test['closest nodes are returned even if there isn\'t enough in one bucket'] = function (test) {
-    test.expect(22);
-    var i, iString;
-    var kBucket = new KBucket({localNodeId: new Buffer('0000', 'hex')});
-    for (i = 0; i < constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET; i++) {
-        iString = i.toString('16');
-        if (iString.length < 2) {
-            iString = '0' + iString;
-          }
-        var farString = '80' + iString; // make sure all go into "far away" bucket
-        kBucket.add({id: new Buffer(farString, 'hex')});
-        var nearString = '01' + iString;
-        kBucket.add({id: new Buffer(nearString, 'hex')});
-                                                                                          }
-    kBucket.add({id: new Buffer('0001', 'hex')});
-    var contact = {id: new Buffer('0003', 'hex')}; // 0000000000000011
-    var contacts = kBucket.closest(contact, 22);
-    test.deepEqual(contacts[0].id, new Buffer('0001', 'hex')); // distance: 0000000000000010
-    test.deepEqual(contacts[1].id, new Buffer('0103', 'hex')); // distance: 0000000100000000
-    test.deepEqual(contacts[2].id, new Buffer('0102', 'hex')); // distance: 0000000100000010
-    test.deepEqual(contacts[3].id, new Buffer('0101', 'hex'));
-    test.deepEqual(contacts[4].id, new Buffer('0100', 'hex'));
-    test.deepEqual(contacts[5].id, new Buffer('0107', 'hex'));
-    test.deepEqual(contacts[6].id, new Buffer('0106', 'hex'));
-    test.deepEqual(contacts[7].id, new Buffer('0105', 'hex'));
-    test.deepEqual(contacts[8].id, new Buffer('0104', 'hex'));
-    test.deepEqual(contacts[9].id, new Buffer('010b', 'hex'));
-    test.deepEqual(contacts[10].id, new Buffer('010a', 'hex'));
-    test.deepEqual(contacts[11].id, new Buffer('0109', 'hex'));
-    test.deepEqual(contacts[12].id, new Buffer('0108', 'hex'));
-    test.deepEqual(contacts[13].id, new Buffer('010f', 'hex'));
-    test.deepEqual(contacts[14].id, new Buffer('010e', 'hex'));
-    test.deepEqual(contacts[15].id, new Buffer('010d', 'hex'));
-    test.deepEqual(contacts[16].id, new Buffer('010c', 'hex'));
-    test.deepEqual(contacts[17].id, new Buffer('0113', 'hex'));
-    test.deepEqual(contacts[18].id, new Buffer('0112', 'hex'));
-    test.deepEqual(contacts[19].id, new Buffer('0111', 'hex'));
-    test.deepEqual(contacts[20].id, new Buffer('0110', 'hex'));
-    test.deepEqual(contacts[21].id, new Buffer('8003', 'hex')); // distance: 1000000000000000
-    // console.log(require('util').inspect(kBucket, false, null));
-    test.done();
-  };
-*)
+
+  ; "closest nodes are returned even if there isn\'t enough in one bucket" =>
+      fun donef ->
+        let kb = ref (KBucket.init (Buffer.fromArray [|0x7f;0|])) in
+        let pings = ref [] in
+        for i = 0 to KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET - 1 do
+          begin
+            let farString = Buffer.fromArray [|0x80;i|] in
+            let nearString = Buffer.fromArray [|0x01;i|] in
+            kbadd kb pings (newContactBuffer farString) ;
+            kbadd kb pings (newContactBuffer nearString)
+          end ;
+        kbadd kb pings (newContactBuffer (Buffer.fromArray [|0;1|])) ;
+        let contact = newContactBuffer (Buffer.fromArray [|0;3|]) in
+        let contacts = KBucket.closest kbOps !kb contact 22 None in
+        let expectedList =
+          [| [|0;1|]
+          ; [|1;3|]
+          ; [|1;2|]
+          ; [|1;1|]
+          ; [|1;0|]
+          ; [|1;7|]
+          ; [|1;6|]
+          ; [|1;5|]
+          ; [|1;4|]
+          ; [|1;0xb|]
+          ; [|1;0xa|]
+          ; [|1;9|]
+          ; [|1;8|]
+          ; [|1;0xf|]
+          ; [|1;0xe|]
+          ; [|1;0xd|]
+          ; [|1;0xc|]
+          ; [|1;0x13|]
+          ; [|1;0x12|]
+          ; [|1;0x11|]
+          ; [|1;0x10|]
+          ; [|0x80;3|]
+          |] |> Array.map Buffer.fromArray
+        in
+        let actualList = contacts |> Array.map (fun n -> n.id) in
+        massert.ok (expectedList = actualList) ;
+        donef ()
   ]

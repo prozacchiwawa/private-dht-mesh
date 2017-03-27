@@ -171,7 +171,10 @@ let determineBucket (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (id
     // for example, if bitIndexWithinByte is 3, we will construct 00010000 by
     // Math.pow(2, (7 - 3)) -> Math.pow(2, 4) -> 16
     *)
-    if (byteUnderConsideration &&& (asl 1 (7 - bitIndexWithinByte))) <> 0 then
+    let bit = (asl 1 (7 - bitIndexWithinByte)) in
+    let bitValue = (byteUnderConsideration &&& bit) <> 0 in
+    
+    if bitValue then
       1
     else
       -1
@@ -192,40 +195,40 @@ let rec addInternal
   let bitIndexPP = bitIndex + 1 in
   match (self.bucket, self.low, self.high) with
   | (None, Some low, Some high) ->
-      if (determineBucket ops self (ops.nodeId contact) (Some (bitIndexPP - 1))) < 0 then
+      if (determineBucket ops self (ops.nodeId contact) (Some (bitIndex))) < 0 then
         (* this is not a leaf node but an inner node with 'low' and 'high'
         // branches; we will check the appropriate bit of the identifier and
         // delegate to the appropriate node for further processing
         *)
-        intr.addInternal ops intr low contact (Some bitIndex) &+
+        intr.addInternal ops intr low contact (Some bitIndexPP) &+
           (fun low ->
             { self with low = Some low } &> []
           )
       else
-        intr.addInternal ops intr high contact (Some bitIndex) &+
+        intr.addInternal ops intr high contact (Some bitIndexPP) &+
           (fun high ->
             { self with high = Some high } &> []
           )
   | (Some bucket, _, _) ->
-      (* Check if the contact already exists *)
-      let index = indexOf ops self contact in
-      if index >= 0 then
-        intr.update ops self contact index
-      else
-        (* The bucket is full *)
-        if Array.length bucket < Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET then
-          { self with bucket = Some (Array.append bucket [|contact|]) } &> []
-        else if self.dontSplit then
-          (* we are not allowed to split the bucket
-          // we need to ping the first constants.DEFAULT_NUMBER_OF_NODES_TO_PING
-          // in order to determine if they are alive
-          // only if one of the pinged nodes does not respond, can the new contact
-          // be added (this prevents DoS flodding with new invalid contacts)
-          *)
-          self &>
-             [Ping (Array.sub bucket 0 Constants.DEFAULT_NUMBER_OF_NODES_TO_PING, contact)]
-        else
-          intr.splitAndAddInternal ops intr self contact (Some bitIndex)
+     (* Check if the contact already exists *)
+     let index = indexOf ops self contact in
+     if index >= 0 then
+       intr.update ops self contact index
+     else
+       (* The bucket is full *)
+       if Array.length bucket < Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET then
+         { self with bucket = Some (Array.append bucket [|contact|]) } &> []
+       else if self.dontSplit then
+         (* we are not allowed to split the bucket
+         // we need to ping the first constants.DEFAULT_NUMBER_OF_NODES_TO_PING
+         // in order to determine if they are alive
+         // only if one of the pinged nodes does not respond, can the new contact
+         // be added (this prevents DoS flodding with new invalid contacts)
+         *)
+         self &>
+           [Ping (Array.sub bucket 0 Constants.DEFAULT_NUMBER_OF_NODES_TO_PING, contact)]
+       else
+         intr.splitAndAddInternal ops intr self contact (Some bitIndex)
   | _ -> failwith "Expected bucket or low,high"
 
 (* contact: Object *required* contact object
