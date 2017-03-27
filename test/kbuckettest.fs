@@ -392,4 +392,42 @@ let tests =
         massert.ok
           ((KBucket.indexOf kbOps !kb (newContactBuffer (nodeId "b"))) = -1) ;
         donef ()
+
+  ; "removing a contact should remove contact from nested buckets" =>
+      fun donef ->
+        let kb = ref (KBucket.init (Buffer.fromArray [|0;0|])) in
+        let pings = ref [] in
+        for i = 0 to KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET - 1 do
+          begin
+            let iString = Buffer.fromArray [|0x80;i|] in
+            kbadd kb pings (newContactBuffer iString)
+          end ;
+        let _ =
+          kbadd kb pings
+            (newContactBuffer
+               (Buffer.fromArray
+                  [|0;KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET-1|]
+               )
+            ) ;
+        let toDelete = (newContactBuffer (Buffer.fromArray [|0x80;0|])) in
+        let highBucketMatch toDelete =
+          match (!kb).high with
+          | Some high ->
+             match high.bucket with
+             | Some bucket ->
+                let firstMatch =
+                  bucket |> Seq.mapi (fun i c -> (i,c))
+                  |> Seq.skipWhile (fun (i,c) -> c.id <> toDelete.id)
+                  |> Seq.truncate 1
+                  |> List.ofSeq
+                in
+                firstMatch <> []
+             | None -> false
+           | None -> false
+        in
+        let _ = massert.ok (highBucketMatch toDelete) in
+        let (kb2,_) = KBucket.remove kbOps !kb toDelete None in
+        let _ = kb := kb2 in
+        massert.ok (not (highBucketMatch toDelete)) ;
+        donef ()
   ]
