@@ -615,46 +615,47 @@ let tests =
 
   ; "deprecated vectorClock results in contact drop" =>
       fun donef ->
-      let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
-      let pings = ref [] in
-      let contact =
-        { newContactBuffer (Buffer.fromString "a" "utf-8") with vectorClock = 3 }
-      in
-      kbadd kb pings contact ;
-      let (kb2,p2) = KBucket.update kbOps !kb { contact with vectorClock = 2 } 0 in
-      massert.ok
-        ((KBucket.toArray !kb)
-         |> Seq.map (fun c -> c.vectorClock)
-         |> Seq.exists (fun v -> v <> 3)
-         |> not
-        ) ;
-      donef ()
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        let contact =
+          { newContactBuffer (Buffer.fromString "a" "utf-8") with vectorClock = 3 }
+        in
+        kbadd kb pings contact ;
+        let (kb2,p2) = KBucket.update kbOps !kb { contact with vectorClock = 2 } 0 in
+        massert.ok
+          ((KBucket.toArray !kb)
+           |> Seq.map (fun c -> c.vectorClock)
+           |> Seq.exists (fun v -> v <> 3)
+           |> not
+          ) ;
+        donef ()
 
-(*
-test['equal vectorClock results in contact marked as most recent'] = function (test) {
-    test.expect(1);
-    var kBucket = new KBucket();
-    var contact = {id: new Buffer("a"), vectorClock: 3};
-    kBucket.add(contact);
-    kBucket.add({id: new Buffer("b")});
-    kBucket.update(contact, 0);
-    test.equal(kBucket.bucket[1], contact);
-    test.done();
-};
+  ; "equal vectorClock results in contact marked as most recent" =>
+      fun donef ->
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        let contact =
+          { newContactBuffer (Buffer.fromString "a" "utf-8") with vectorClock = 3 }
+        in
+        kbadd kb pings contact ;
+        kbadd kb pings (newContactBuffer (Buffer.fromString "b" "utf-8")) ;
+        let (kb2,p2) = KBucket.update kbOps !kb contact 0 in
+        massert.ok ((KBucket.toArray kb2).[1].id = contact.id) ;
+        donef ()
 
-test['more recent vectorClock results in contact update and contact being' +
-     ' marked as most recent'] = function (test) {
-    test.expect(4);
-    var kBucket = new KBucket();
-    var contact = {id: new Buffer("a"), old: 'property', vectorClock: 3};
-    kBucket.add(contact);
-    kBucket.add({id: new Buffer("b")});
-    kBucket.update({id: new Buffer("a"), newer: 'property', vectorClock: 4}, 0);
-    test.ok(bufferEqual(kBucket.bucket[1].id, contact.id));
-    test.equal(kBucket.bucket[1].vectorClock, 4);
-    test.strictEqual(kBucket.bucket[1].old, undefined);
-    test.strictEqual(kBucket.bucket[1].newer, 'property');
-    test.done();
-};
- *)
+  ; "more recent vectorClock results in contact update and contact being  marked as most recent" =>
+      fun donef ->
+        let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
+        let pings = ref [] in
+        let contact =
+          { newContactBuffer (Buffer.fromString "a" "utf-8") with vectorClock = 3 }
+        in
+        kbadd kb pings contact ;
+        kbadd kb pings (newContactBuffer (Buffer.fromString "b" "utf-8")) ;
+        let (kb2,p2) = KBucket.update kbOps !kb { contact with foo = "property" ; vectorClock = 4 } 0 in
+        let contents = KBucket.toArray kb2 in
+        massert.ok (contents.[1].id = contact.id) ;
+        massert.ok (contents.[1].vectorClock = 4) ;
+        massert.ok (contents.[1].foo = "property") ;
+        donef ()
   ]
