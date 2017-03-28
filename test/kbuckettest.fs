@@ -481,19 +481,8 @@ let tests =
          | _ -> massert.ok false
         ) ;
         donef ()
+
 (*
-test['split buckets contain all added contacts'] = function (test) {
-    test.expect(constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET + 2);
-    var kBucket = new KBucket({localNodeId: new Buffer('00', 'hex')});
-    var foundContact = {};
-    for (var i = 0; i < constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET + 1; i++) {
-        var iString = i.toString('16');
-        if (iString.length < 2) {
-            iString = '0' + iString;
-             }
-        kBucket.add({id: new Buffer(iString, 'hex')});
-        foundContact[iString] = false;
-          }
     var traverse = function (node) {
         if (!node.bucket) {
             traverse(node.low);
@@ -505,13 +494,44 @@ test['split buckets contain all added contacts'] = function (test) {
           }
                               };
     traverse(kBucket);
-    Object.keys(foundContact).forEach(function (key) {
-        test.ok(foundContact[key], key);
-                                                 });
-    test.ok(!kBucket.bucket);
-    test.done();
-                                                              };
+ *)
 
+  ; "split buckets contain all added contacts" =>
+      fun donef ->
+        let rec traverse kb =
+          match (kb.bucket,kb.low,kb.high) with
+          | (Some bucket,None,None) ->
+             Seq.concat [bucket]
+          | (None,Some low,Some high) ->
+             Seq.concat [traverse low;traverse high]
+          | _ -> failwith "Expected bucket or low,high"
+        in
+        let kb = ref (KBucket.init (Buffer.fromArray [|0|])) in
+        let pings = ref [] in
+        let foundContact = ref Map.empty in
+        for i = 0 to KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET + 1 do
+          begin
+            let iString = Buffer.fromArray [|i|] in
+            kbadd kb pings (newContactBuffer iString) ;
+            foundContact := Map.add i false !foundContact
+          end ;
+        let _ =
+          traverse !kb
+          |> Seq.iter
+               (fun elt ->
+                 let i = Buffer.at 0 elt.id in
+                 foundContact := Map.add i true !foundContact
+               )
+        in
+        massert.ok
+          (!foundContact
+           |> Map.toSeq
+           |> Seq.exists (fun (k,v) -> not v)
+           |> not
+          ) ;
+        massert.ok ((!kb).bucket = None) ;
+        donef ()
+(*
 test['when splitting buckets the "far away" bucket should be marked' +
      ' to prevent splitting "far away" bucket'] = function (test) {
     test.expect(5);
