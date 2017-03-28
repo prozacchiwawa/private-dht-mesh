@@ -386,19 +386,19 @@ let rec splitAndAddInternal
      in
      let splitSelf =
        { self with
-         bucket = None ;
-         low =
-           Some
-             { init self.localNodeId with
-               bucket = Some newLowBucket ;
-               dontSplit = not whichBucketIsFar
-             } ;
-         high =
-           Some
-             { init self.localNodeId with
-               bucket = Some newHighBucket ;
-               dontSplit = whichBucketIsFar
-             }
+           bucket = None ;
+           low =
+             Some
+               { init self.localNodeId with
+                   bucket = Some newLowBucket ;
+                   dontSplit = not whichBucketIsFar
+               } ;
+           high =
+             Some
+               { init self.localNodeId with
+                   bucket = Some newHighBucket ;
+                   dontSplit = whichBucketIsFar
+               }
        }
      in
      (* add the contact being added *)

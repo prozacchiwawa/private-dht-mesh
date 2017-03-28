@@ -337,14 +337,14 @@ let tests =
         let pings = ref [] in
         let contact =
           { newContactString "a" with
-            foo = "foo" ;
-            vectorClock = 0
+              foo = "foo" ;
+              vectorClock = 0
           }
         in
         let contact2 =
           { newContactString "a" with
-            foo = "bar" ;
-            vectorClock = 1
+              foo = "bar" ;
+              vectorClock = 1
           }
         in
         kbadd kb pings contact ;
@@ -541,6 +541,7 @@ let tests =
              traverse high true
           | (Some bucket, _, _) ->
              massert.ok (node.dontSplit = dontSplit)
+          | _ -> failwith "Expected bucket or low,high"
         in
         let kb = ref (KBucket.init (Buffer.fromArray [|0|])) in
         let pings = ref [] in
@@ -557,4 +558,39 @@ let tests =
         *)
         traverse !kb false ;
         donef ()
+
+  ; "toArray should return empty array if no contacts" =>
+      fun donef ->
+        let kb = KBucket.init (nodeId (ShortId.generate ())) in
+        massert.ok ((Array.length (KBucket.toArray kb)) = 0) ;
+        donef ()
+(*
+test['toArray should return all contacts in an array arranged from low to high buckets'] = function (test) {
+    test.expect(22);
+    var iString;
+    var expectedIds = [];
+    var kBucket = new KBucket({localNodeId: new Buffer('0000', 'hex')});
+    for (var i = 0; i < constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET; i++) {
+        iString = i.toString('16');
+        if (iString.length < 2) {
+            iString = '0' + iString;
+        }
+        iString = '80' + iString; // make sure all go into "far away" bucket
+        expectedIds.push(iString);
+        kBucket.add({id: new Buffer(iString, 'hex')});
+    }
+    // cause a split to happen
+    kBucket.add({id: new Buffer('00' + iString, 'hex')});
+    // console.log(require('util').inspect(kBucket, {depth: null}));
+    var contacts = kBucket.toArray();
+    // console.log(require('util').inspect(contacts, {depth: null}));
+    test.equal(contacts.length, constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET + 1);
+    test.equal(contacts[0].id.toString('hex'), '00' + iString);
+    contacts.shift(); // get rid of low bucket contact
+    for (i = 0; i < constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET; i++) {
+        test.equal(contacts[i].id.toString('hex'), expectedIds[i]);
+    }
+    test.done();
+};
+*)
   ]
