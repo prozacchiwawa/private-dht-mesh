@@ -531,37 +531,30 @@ let tests =
           ) ;
         massert.ok ((!kb).bucket = None) ;
         donef ()
-(*
-test['when splitting buckets the "far away" bucket should be marked' +
-     ' to prevent splitting "far away" bucket'] = function (test) {
-    test.expect(5);
-    var kBucket = new KBucket({localNodeId: new Buffer('00', 'hex')});
-    for (var i = 0; i < constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET + 1; i++) {
-        var iString = i.toString('16');
-        if (iString.length < 2) {
-            iString = '0' + iString;
-             }
-        kBucket.add({id: new Buffer(iString, 'hex')});
-          }
-    // above algorithm will split low bucket 4 times and put 0x00 through 0x0f
-    // in the low bucket, and put 0x10 through 0x14 in high bucket
-    // since localNodeId is 0x00, we expect every high bucket to be "far" and
-    // therefore marked as "dontSplit = true"
-    // there will be one "low" bucket and four "high" buckets (test.expect(5))
-    var traverse = function (node, dontSplit) {
-        if (!node.bucket) {
-            traverse(node.low, false);
-            traverse(node.high, true);
-             } else {
-            if (dontSplit) {
-                test.ok(node.dontSplit);
-                 } else {
-                test.ok(!node.dontSplit);
-              }
-          }
-                              };
-    traverse(kBucket);
-    test.done();
-                                                             };
-*)
+
+  ; "when splitting buckets the \"far away\" bucket should be marked to prevent splitting \"far away\" bucket" =>
+      fun donef ->
+        let rec traverse node dontSplit =
+          match (node.bucket,node.low,node.high) with
+          | (None, Some low, Some high) ->
+             traverse low false ;
+             traverse high true
+          | (Some bucket, _, _) ->
+             massert.ok (node.dontSplit = dontSplit)
+        in
+        let kb = ref (KBucket.init (Buffer.fromArray [|0|])) in
+        let pings = ref [] in
+        for i = 0 to KBucket.Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET do
+          begin
+            let iString = Buffer.fromArray [|i|] in
+            kbadd kb pings (newContactBuffer iString)
+          end ;
+        (* above algorithm will split low bucket 4 times and put 0x00 through 0x0f
+        // in the low bucket, and put 0x10 through 0x14 in high bucket
+        // since localNodeId is 0x00, we expect every high bucket to be "far" and
+        // therefore marked as "dontSplit = true"
+        // there will be one "low" bucket and four "high" buckets (test.expect(5))
+        *)
+        traverse !kb false ;
+        donef ()
   ]
