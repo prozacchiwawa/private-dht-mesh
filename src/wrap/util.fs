@@ -77,6 +77,13 @@ let random : unit -> float = fun _ -> failwith "JS"
 let randomInt mx =
   floor ((toFloat mx) * (random ()))
 
+[<Emit("(function() { return Number.POSITIVE_INFINITY; })()")>]
+let infinity_ : unit -> float = fun _ -> failwith "JS"
+[<Emit("(function() { return Number.POSITIVE_INFINITY; })()")>]
+let infinityInt_ : unit -> int = fun _ -> failwith "JS"
+let infinity = infinity_ ()
+let infinityInt = infinityInt_ ()
+
 let optionMap f o =
   match o with
   | Some a -> Some (f a)

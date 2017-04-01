@@ -13,8 +13,10 @@
 #load "../src/queue.fs"
 #load "../src/forward.fs"
 #load "../src/kbucket.fs"
+#load "../src/querystream.fs"
 #load "./mocha.fs"
 #load "./kbuckettest.fs"
+#load "./querystreamtest.fs"
 
 open Util
 open Buffer
@@ -72,6 +74,7 @@ let tests : (string * (It list)) list =
             end
       ]
   ; "k-bucket" => KBucketTest.tests
+  ; "dht" => QueryStreamTest.tests
   ]
 
 let _ =
