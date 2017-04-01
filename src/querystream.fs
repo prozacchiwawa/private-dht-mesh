@@ -1,5 +1,7 @@
 module QueryStream
 
+(* https://raw.githubusercontent.com/mafintosh/dht-rpc/master/query-stream.js *)
+
 open Buffer
 
 let infinity = Util.infinityInt
