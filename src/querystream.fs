@@ -19,8 +19,11 @@ let BLANK =
 
 type Action =
   | NoOp
-  | Finalize
-  | Sent of int
+  | Error of string
+  | Close
+  | Chunk of Buffer
+  | EOF
+
 and QueryStream =
   { concurrency : int
   ; query : DHTQuery
@@ -32,6 +35,7 @@ and QueryStream =
   ; responses : int
   ; errors : int
   ; verbose : bool
+  ; destroyed : bool
   ; _committing : bool
   ; _closest : Node array
   ; _concurrency : int
@@ -42,6 +46,7 @@ and QueryStream =
   ; _moveCloser : bool
   ; _bootstrap : Node array
   ; _bootstrapped : bool
+  ; _finalized : bool
   }
 and Node =
   { id : Buffer
@@ -67,26 +72,38 @@ and DHTOps<'dht> =
   ; nodeSetReferer : Buffer -> Node -> Node
   ; dhtRequest : DHTQuery -> Node -> bool -> 'dht -> 'dht
   ; takeQueryStream : QueryStream -> 'dht -> 'dht
+  ; emit : Action -> Buffer -> 'dht -> 'dht
+  ; adjustInFlightQueries : int -> 'dht -> 'dht
   }
-
-(*
-QueryStream.prototype.destroy = function (err) {
-  if (this.destroyed) return
-  this.destroyed = true
-  this._finalize()
-  if (err) this.emit('error', err)
-  this.emit('close')
-                                           }
-
-QueryStream.prototype._finalize = function () {
-  if (this._finalized) return
-  this._finalized = true
-  this._dht.inflightQueries--
-  if (!this.responses && !this.destroyed) this.destroy(new Error('No nodes responded'))
-  if (!this.commits && this._committing && !this.destroyed) this.destroy(new Error('No close nodes responded'))
-  this.push(null)
-                                             }
- *)
+let rec destroy dhtOps dht err self =
+  if not self.destroyed then
+    { self with destroyed = true }
+    |> _finalize dhtOps dht
+    |> (fun dht ->
+         match err with
+         | Some e -> dhtOps.emit (Error e) self.id dht
+         | None -> dht
+       )
+    |> dhtOps.emit Close self.id
+  else
+    dht
+and _finalize (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : 'dht =
+  if self._finalized then
+    dht
+  else
+    let updatedSelf = { self with _finalized = true } in
+    dht
+    |> dhtOps.takeQueryStream updatedSelf
+    |> dhtOps.adjustInFlightQueries -1
+    |> (fun dht ->
+         if updatedSelf.responses = 0 && not updatedSelf.destroyed then
+           destroy dhtOps dht (Some "No nodes responded") updatedSelf
+         else if updatedSelf.commits = 0 && not updatedSelf._committing && not updatedSelf.destroyed then
+           destroy dhtOps dht (Some "No close nodes responded") updatedSelf
+         else
+           dht
+       )
+    |> (dhtOps.emit EOF updatedSelf.id)
 
 let xor b1 b2 =
   let b1l = Buffer.length b1 in
@@ -236,6 +253,19 @@ let _send dhtOps dht node force useToken self =
     false
     (dhtOps.takeQueryStream self2 dht)
 
+let _sendAll closest b1 b2 self =
+  (false,self)
+
+let _sendTokens (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : (bool * 'dht) =
+  if self.destroyed then
+    (false,dht)
+  else
+    let (sent,self2) = _sendAll self._closest false true self in
+    if not (sent || self2._inflight <> 0) then
+      (sent,_finalize dhtOps dht self)
+    else
+      (sent,dhtOps.takeQueryStream self2 dht)
+
 (*
 QueryStream.prototype._bootstrap = function () {
   this._bootstrapped = true
@@ -260,15 +290,6 @@ QueryStream.prototype._bootstrap = function () {
 QueryStream.prototype._readMaybe = function () {
   if (this._readableState.flowing === true) this._read()
                                               }
-
-QueryStream.prototype._sendTokens = function () {
-  if (this.destroyed) return
-
-  var sent = this._sendAll(this._closest, false, true)
-  if (sent || this._inflight) return
-
-  this._finalize()
-                                               }
 
 QueryStream.prototype._sendPending = function () {
   if (this.destroyed) return
