@@ -73,7 +73,9 @@ and DHTOps<'dht> =
   ; dhtRequest : DHTQuery -> Node -> bool -> 'dht -> 'dht
   ; takeQueryStream : QueryStream -> 'dht -> 'dht
   ; emit : Action -> Buffer -> 'dht -> 'dht
+  ; getInFlightQueries : 'dht -> int
   ; adjustInFlightQueries : int -> 'dht -> 'dht
+  ; withQueryStream : (QueryStream -> 'dht) -> Buffer -> 'dht
   }
 let rec destroy dhtOps dht err self =
   if not self.destroyed then
@@ -253,18 +255,35 @@ let _send dhtOps dht node force useToken self =
     false
     (dhtOps.takeQueryStream self2 dht)
 
-let _sendAll closest b1 b2 self =
-  (false,self)
+let _sendAll dhtOps dht nodes force useToken self =
+  let sent = 0 in
+  let free = max 0 (self._concurrency - (dhtOps.getInFlightQueries dht)) in
+  
+  let free1 = if free <> 0 && self._inflight <> 0 then 1 else 0 in
 
-let _sendTokens (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : (bool * 'dht) =
+  Array.fold
+    (fun (sent,dht) node ->
+      if sent < free then
+        (sent+1,
+         dhtOps.withQueryStream
+           (fun uself -> _send dhtOps dht node force useToken uself)
+           self.id
+        )
+      else
+        (sent,dht)
+    )
+    (sent,dht)
+    nodes
+
+let _sendTokens (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : (int * 'dht) =
   if self.destroyed then
-    (false,dht)
+    (0,dht)
   else
-    let (sent,self2) = _sendAll self._closest false true self in
-    if not (sent || self2._inflight <> 0) then
-      (sent,_finalize dhtOps dht self)
-    else
+    let (sent,self2) = _sendAll dhtOps dht self._closest false true self in
+    if  (sent = 0 && self2._inflight = 0) then
       (sent,dhtOps.takeQueryStream self2 dht)
+    else
+      (sent,_finalize dhtOps dht self2)
 
 (*
 QueryStream.prototype._bootstrap = function () {
@@ -366,22 +385,6 @@ QueryStream.prototype._callback = function (err, res, peer) {
 
   this.push(data)
                                              }
-
-QueryStream.prototype._sendAll = function (nodes, force, useToken) {
-  var sent = 0
-  var free = Math.max(0, this._concurrency - this._dht.socket.inflight)
-
-  if (!free && !this._inflight) free = 1
-  if (!free) return 0
-
-  for (var i = 0; i < nodes.length; i++) {
-    if (this._send(nodes[i], force, useToken)) {
-      if (++sent === free) break
-         }
-        }
-
-  return sent
-                                            }
 
 function decodeNodes (buf) {
   if (!buf) return []
