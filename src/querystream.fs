@@ -6,10 +6,17 @@ open Buffer
 
 let infinity = Util.infinityInt
 
+let optionMap f o =
+  match o with
+  | Some s -> Some (f s)
+  | None -> None
+
 let optionDefault v o =
   match o with
   | Some s -> s
   | None -> v
+
+let max a b = if a < b then b else a
 
 let BLANK = 
   Buffer.fromArray
@@ -75,7 +82,9 @@ and DHTOps<'dht> =
   ; emit : Action -> Buffer -> 'dht -> 'dht
   ; getInFlightQueries : 'dht -> int
   ; adjustInFlightQueries : int -> 'dht -> 'dht
-  ; withQueryStream : (QueryStream -> 'dht) -> Buffer -> 'dht
+  ; withQueryStream : (QueryStream -> 'dht) -> Buffer -> 'dht -> 'dht
+  ; getClosest : Buffer -> int -> 'dht -> Node array
+  ; getBootstrap : 'dht -> Node array
   }
 let rec destroy dhtOps dht err self =
   if not self.destroyed then
@@ -215,18 +224,20 @@ let _addClosest dhtOps dht res peer self =
   else
     self
 
-let _addPending (dhtOps : DHTOps<'dht>) (dht : 'dht) (node : Node) (r : Buffer) (self : QueryStream) : QueryStream =
+let _addPending (dhtOps : DHTOps<'dht>) (dht : 'dht) (node : Node) (r : Buffer option) (self : QueryStream) : QueryStream =
   if bufferCompare node.id (dhtOps.dhtId dht) <> 0 then
     let newNode =
       node
       |> dhtOps.nodeSetDistance (xor self.target node.id)
-      |> dhtOps.nodeSetReferer r
+      |> (fun dht ->
+            r |> optionMap (fun r -> dhtOps.nodeSetReferer r dht) |> optionDefault dht
+         )
     in
     insertPendingSorted dhtOps newNode (self._k |> optionDefault infinity) self
   else
     self
 
-let _send dhtOps dht node force useToken self =
+let _send (dhtOps : DHTOps<'dht>) (dht : 'dht) (node : Node) (force : bool) (useToken : bool) (self : QueryStream) : 'dht =
   let node2 =
     if not force then
       if node.queried then
@@ -255,25 +266,23 @@ let _send dhtOps dht node force useToken self =
     false
     (dhtOps.takeQueryStream self2 dht)
 
-let _sendAll dhtOps dht nodes force useToken self =
+let updateSelfForSend (dhtOps : DHTOps<'dht>) (dht : 'dht) (force : bool) (useToken : bool) (node : Node) (self : QueryStream) : QueryStream =
+  _send dhtOps dht node force useToken self
+
+let _sendAll (dhtOps : DHTOps<'dht>) (dht : 'dht) (nodes : Node array) (force : bool) (useToken : bool) (self : QueryStream) : (int * 'dht) =
   let sent = 0 in
   let free = max 0 (self._concurrency - (dhtOps.getInFlightQueries dht)) in
   
-  let free1 = if free <> 0 && self._inflight <> 0 then 1 else 0 in
-
-  Array.fold
-    (fun (sent,dht) node ->
-      if sent < free then
-        (sent+1,
-         dhtOps.withQueryStream
-           (fun uself -> _send dhtOps dht node force useToken uself)
-           self.id
-        )
-      else
-        (sent,dht)
-    )
-    (sent,dht)
-    nodes
+  let free1 = if free = 0 && self._inflight = 0 then 1 else free in
+  let sendToNode ((sent,dht) : (int * 'dht)) (node : Node) =
+    let (theDht : 'dht) = dht in
+    if sent < free1 then
+      (sent+1,(dhtOps.withQueryStream (updateSelfForSend dhtOps theDht force useToken node) self.id theDht))
+    else
+      (sent,dht)
+  in
+  let (sentAndDht : (int * 'dht)) = (sent,dht) in
+  Array.fold sendToNode (sent,dht) nodes
 
 let _sendTokens (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : (int * 'dht) =
   if self.destroyed then
@@ -285,25 +294,26 @@ let _sendTokens (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : (int
     else
       (sent,_finalize dhtOps dht self2)
 
-(*
-QueryStream.prototype._bootstrap = function () {
-  this._bootstrapped = true
-
-  var bootstrap = this._dht.nodes.closest(this.target, this._k)
-  var i = 0
-
-  for (i = 0; i < bootstrap.length; i++) {
-    var b = bootstrap[i]
-    this._addPending({id: b.id, port: b.port, host: b.host}, null)
-        }
-
-  if (bootstrap.length < this._dht._bootstrap.length) {
-    for (i = 0; i < this._dht._bootstrap.length; i++) {
-      this._send(this._dht._bootstrap[i], true, false)
-          }
-       }
-                                            }
- *)
+let _bootstrap dhtOps dht self =
+  let selfBSTrue = { self with _bootstrapped = true } in
+  let bootstrap = dhtOps.getClosest self.target (self._k |> optionDefault infinity) dht in
+  let self2 =
+    Array.fold
+      (fun self node ->
+        _addPending dhtOps dht node None self
+      )
+      selfBSTrue
+      bootstrap
+  in
+  let (dhtBootstrap : Node array) = dhtOps.getBootstrap dht in
+  let dht2 = dhtOps.takeQueryStream self2 dht in
+  let applySend (dht : 'dht) (node : Node) : 'dht =
+    dhtOps.withQueryStream (updateSelfForSend dhtOps dht true false node) self.id dht
+  in
+  if Array.length bootstrap < Array.length dhtBootstrap then
+    Array.fold applySend dht2 dhtBootstrap
+  else
+    dhtOps.takeQueryStream self dht2
 
 (*
 QueryStream.prototype._readMaybe = function () {
