@@ -85,6 +85,7 @@ and DHTOps<'dht> =
   ; withQueryStream : (QueryStream -> 'dht) -> Buffer -> 'dht -> 'dht
   ; getClosest : Buffer -> int -> 'dht -> Node array
   ; getBootstrap : 'dht -> Node array
+  ; holepunch : Node -> Buffer -> QueryStream -> 'dht -> 'dht
   }
 let rec destroy dhtOps dht err self =
   if not self.destroyed then
@@ -266,8 +267,11 @@ let _send (dhtOps : DHTOps<'dht>) (dht : 'dht) (node : Node) (force : bool) (use
     false
     (dhtOps.takeQueryStream self2 dht)
 
-let updateSelfForSend (dhtOps : DHTOps<'dht>) (dht : 'dht) (force : bool) (useToken : bool) (node : Node) (self : QueryStream) : QueryStream =
-  _send dhtOps dht node force useToken self
+let updateSelfForSend (dhtOps : DHTOps<'dht>) (dht : 'dht) (force : bool) (useToken : bool) (node : Node) (self : QueryStream) : 'dht =
+  dhtOps.withQueryStream
+    (fun self -> _send dhtOps dht node force useToken self)
+    self.id
+    dht
 
 let _sendAll (dhtOps : DHTOps<'dht>) (dht : 'dht) (nodes : Node array) (force : bool) (useToken : bool) (self : QueryStream) : (int * 'dht) =
   let sent = 0 in
@@ -288,11 +292,18 @@ let _sendTokens (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : (int
   if self.destroyed then
     (0,dht)
   else
-    let (sent,self2) = _sendAll dhtOps dht self._closest false true self in
-    if  (sent = 0 && self2._inflight = 0) then
-      (sent,dhtOps.takeQueryStream self2 dht)
-    else
-      (sent,_finalize dhtOps dht self2)
+    let (sent,dht2) = _sendAll dhtOps dht self._closest false true self in
+    (sent,
+     dhtOps.withQueryStream
+       (fun self ->
+         if (sent = 0 && self._inflight = 0) then
+           dhtOps.takeQueryStream self dht2
+         else
+           _finalize dhtOps dht2 self
+       )
+       self.id
+       dht2
+    )
 
 let _bootstrap dhtOps dht self =
   let selfBSTrue = { self with _bootstrapped = true } in
@@ -341,8 +352,8 @@ let _sendPending dhtOps dht self =
              in
              let selfWithQFalse =
                { self with
-                 _closest = closestQueriedFalse ;
-                 _committing = true
+                   _closest = closestQueriedFalse ;
+                   _committing = true
                }
              in
              dhtOps.takeQueryStream selfWithQFalse dht3
@@ -352,6 +363,9 @@ let _sendPending dhtOps dht self =
         self.id
         dht3
 
+let _holepunch dhtOps dht peer query self =
+  dhtOps.holepunch peer peer.referer self dht
+  
 (*
 QueryStream.prototype._readMaybe = function () {
   if (this._readableState.flowing === true) this._read()
@@ -362,15 +376,6 @@ QueryStream.prototype._read = function () {
   if (this._committing) this._sendTokens()
   else this._sendPending()
                                          }
-
-QueryStream.prototype._holepunch = function (peer, query) {
-  var self = this
-
-  this._dht._holepunch(peer, peer.referrer, function (err) {
-    if (err) return self._callback(err, null, peer)
-    self._dht._request(query, peer, false, self._onresponse)
-                                                       })
-                                              }
 
 QueryStream.prototype._callback = function (err, res, peer) {
   this._inflight--
