@@ -315,25 +315,47 @@ let _bootstrap dhtOps dht self =
   else
     dhtOps.takeQueryStream self dht2
 
+let _sendPending dhtOps dht self =
+  if self.destroyed then
+    dht
+  else
+    let dht2 =
+      if not self._bootstrapped then
+        _bootstrap dhtOps dht self
+      else
+        dht
+    in
+    let (sent,newSelf) = _sendAll dhtOps dht2 self._pending false false self in
+    let dht3 = dhtOps.takeQueryStream newSelf dht2 in
+    if sent <> 0 || self._inflight <> 0 then
+      dht3
+    else
+      dhtOps.withQueryStream
+        (fun self ->
+          match self.token with
+          | Some token ->
+             let closestQueriedFalse =
+               Array.map
+                 (fun n -> { n with queried = false })
+                 self._closest
+             in
+             let selfWithQFalse =
+               { self with
+                 _closest = closestQueriedFalse ;
+                 _committing = true
+               }
+             in
+             dhtOps.takeQueryStream selfWithQFalse dht3
+          | None ->
+             _finalize dhtOps dht3 self
+        )
+        self.id
+        dht3
+
 (*
 QueryStream.prototype._readMaybe = function () {
   if (this._readableState.flowing === true) this._read()
                                               }
-
-QueryStream.prototype._sendPending = function () {
-  if (this.destroyed) return
-  if (!this._bootstrapped) this._bootstrap()
-
-  var sent = this._sendAll(this._pending, false, false)
-  if (sent || this._inflight) return
-
-  if (this.token) {
-    for (var i = 0; i < this._closest.length; i++) this._closest[i].queried = false
-    this._committing = true
-    this._sendTokens()
-       } else {
-    this._finalize()
-    }
                                                 }
 
 QueryStream.prototype._read = function () {
