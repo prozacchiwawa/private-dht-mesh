@@ -14,9 +14,11 @@
 #load "../src/forward.fs"
 #load "../src/kbucket.fs"
 #load "../src/querystream.fs"
+#load "../src/dht.fs"
 #load "./mocha.fs"
 #load "./kbuckettest.fs"
 #load "./querystreamtest.fs"
+#load "./dhttest.fs"
 
 open Util
 open Buffer

@@ -4,10 +4,12 @@ open Buffer
 open Crypto
 open ShortId
 open KBucket
+open QueryStream
 
 type Action =
   | Ready
   | Send of Buffer
+  | StreamOp of QueryStream.Action
 
 type KBucketNode =
   { id : Buffer
@@ -83,62 +85,48 @@ type DHT<'a,'b> =
   ; _tickInterval : int
   ; _top : 'b option
   ; _bottom : 'b option
+  ; _queryData : Map<string,QueryInfo>
   }
 
+and QueryInfo =
+  { id : string
+  ; qs : QueryStream
+  ; actions : QueryStream.Action list
+  }
 
+let _token peer i self =
+  let sha256Hasher = Crypto.createHash "sha256" in
+  let theSecret =
+    match (self._secrets,i) with
+    | ((s,_),false) -> s
+    | ((_,s),_) -> s
+  in
+  let addr = IPAddr.parse peer.host in
+  let hostBuffer = Buffer.fromArray (addr.toByteArray ()) in
+  let _ = Crypto.updateBuffer theSecret sha256Hasher in
+  let _ = Crypto.updateBuffer hostBuffer sha256Hasher in
+  Crypto.digestBuffer sha256Hasher
 
 (*
-  process.nextTick(function () {
-    self.bootstrap()
-                              })
-
-  function rotateSecrets () {
-    self._rotateSecrets()
-                         }
-
-  function onrequest (request, peer) {
-    self._onrequest(request, peer)
-                     }
-
-  function onresponse (response, peer) {
-    self._onresponse(response, peer)
-                      }
-
-  function onnodeping (oldContacts, newContact) {
-    self._onnodeping(oldContacts, newContact)
-                      }
-
-  function onclose () {
-    while (self._pendingRequests.length) {
-      self._pendingRequests.shift().callback(new Error('Request cancelled'))
-            }
-    self.emit('close')
-                   }
-
-  function tick () {
-    self._tick++
-    if ((self._tick & 7) === 0) self._pingSome()
-                }
-             }
-
-inherits(DHT, events.EventEmitter)
 
 DHT.prototype.ready = function (cb) {
   if (!this._bootstrapped) this.once('ready', cb)
   else cb()
-                                 }
- *)
+}
 
-let emptyOpts = { }
+DHT.prototype.query = function (query, opts, cb) {
+  if (typeof opts === 'function') return this.query(query, null, opts)
+  return collect(queryStream(this, query, opts), cb)
+}
 
-let query query_ opts self =
-  collect (queryStream self query_ opts) self
+DHT.prototype.update = function (query, opts, cb) {
+  if (typeof opts === 'function') return this.update(query, null, opts)
+  if (!opts) opts = {}
+  if (opts.query) opts.verbose = true
+  opts.token = true
+  return collect(queryStream(this, query, opts), cb)
+}
 
-let update query_ opts_ self =
-  let opts = { opts_ |> optionDefault emptyOpts with token = true } in
-  collect (queryStream self query_ opts) self
-
-(*
 DHT.prototype._pingSome = function () {
   var cnt = this.inflightQueries > 2 ? 1 : 3
   var oldest = this._bottom
@@ -147,12 +135,12 @@ DHT.prototype._pingSome = function () {
     if (!oldest || this._tick - oldest.tick < 3) continue
     this._check(oldest)
     oldest = oldest.next
-          }
-                                     }
+  }
+}
 
 DHT.prototype.holepunch = function (peer, referrer, cb) {
   this._holepunch(parseAddr(peer), parseAddr(referrer), cb)
-                                     }
+}
 
 DHT.prototype.ping = function (peer, cb) {
   this._ping(parseAddr(peer), function (err, res, peer) {
@@ -160,29 +148,39 @@ DHT.prototype.ping = function (peer, cb) {
     var rinfo = decodePeer(res.value)
     if (!rinfo) return cb(new Error('Invalid pong'))
     cb(null, rinfo, {port: peer.port, host: peer.host, id: res.id})
-                                         })
-                                }
+  })
+}
 
 DHT.prototype.toArray = function () {
   return this.nodes.toArray()
-                                   }
+}
 
 DHT.prototype.destroy = function () {
   clearInterval(this._secretsInterval)
   clearInterval(this._tickInterval)
   this.socket.destroy()
-                                   }
+}
 
 DHT.prototype.address = function () {
   return this.socket.address()
-                                   }
+}
 
 DHT.prototype._rotateSecrets = function () {
   var secret = crypto.randomBytes(32)
   this._secrets[1] = this._secrets[0]
   this._secrets[0] = secret
-                                          }
+}
 
+DHT.prototype.bootstrap = function (cb) {
+  var self = this
+
+  if (!this._bootstrap.length) return process.nextTick(done)
+
+  var backgroundCon = Math.min(self.concurrency, Math.max(2, Math.floor(self.concurrency / 8)))
+  var qs = this.query({
+    command: '_find_node',
+    target: this.id
+  })
 
   qs.on('data', update)
   qs.on('error', onerror)
@@ -192,49 +190,36 @@ DHT.prototype._rotateSecrets = function () {
 
   function onerror (err) {
     if (cb) cb(err)
-                   }
+  }
 
   function done () {
     if (!self._bootstrapped) {
       self._bootstrapped = true
       self.emit('ready')
-         }
+    }
     if (cb) cb()
-                  }
+  }
 
- *)
-
-let collect 
-
-let bootstrap (self : DHT<'a,'b>) =
-  if List.length self._bootstrap = 0 then
-    self &> [Ready]
-  else
-    let backgroundCon = min self.concurrency (max 2 (floor (self.concurrency / 2))) in
-    query { command = "_find_node" ; target = self.id } self
-    +> update
-
-(*
   function update () {
     qs._concurrency = self.inflightQueries === 1 ? self.concurrency : backgroundCon
-                  }
-                                     }
+  }
+}
 
 DHT.prototype._ping = function (peer, cb) {
   this._request({command: '_ping', id: this._queryId}, peer, false, cb)
-                                 }
+}
 
 DHT.prototype._holepunch = function (peer, referrer, cb) {
   this._request({command: '_ping', id: this._queryId, forwardRequest: encodePeer(peer)}, referrer, false, cb)
-                                      }
+}
 
 DHT.prototype._request = function (request, peer, important, cb) {
   if (this.socket.inflight >= this.concurrency || this._pendingRequests.length) {
     this._pendingRequests.push({request: request, peer: peer, callback: cb})
-       } else {
+  } else {
     this.socket.request(request, peer, cb)
-    }
-                                    }
+  }
+}
 
 DHT.prototype._onrequest = function (request, peer) {
   if (validateId(request.id)) this._addNode(request.id, peer, request.roundtripToken)
@@ -243,14 +228,14 @@ DHT.prototype._onrequest = function (request, peer) {
     if (!bufferEquals(request.roundtripToken, this._token(peer, 0))) {
       if (!bufferEquals(request.roundtripToken, this._token(peer, 1))) {
         request.roundtripToken = null
-           }
-         }
-       }
+      }
+    }
+  }
 
   if (request.forwardRequest) {
     this._forwardRequest(request, peer)
     return
-       }
+  }
 
   if (request.forwardResponse) peer = this._forwardResponse(request, peer)
 
@@ -260,7 +245,7 @@ DHT.prototype._onrequest = function (request, peer) {
   }
 
   this._onquery(request, peer)
-                                      }
+}
 
 DHT.prototype._forwardResponse = function (request, peer) {
   if (request.command !== '_ping') return // only allow ping for now
@@ -268,15 +253,15 @@ DHT.prototype._forwardResponse = function (request, peer) {
   try {
     var from = peers.decode(request.forwardResponse)[0]
     if (!from) return
-    } catch (err) {
+  } catch (err) {
     return
-      }
+  }
 
   from.request = true
   from.tid = peer.tid
 
   return from
-                                            }
+}
 
 DHT.prototype._forwardRequest = function (request, peer) {
   if (request.command !== '_ping') return // only allow ping forwards right now
@@ -284,15 +269,15 @@ DHT.prototype._forwardRequest = function (request, peer) {
   try {
     var to = peers.decode(request.forwardRequest)[0]
     if (!to) return
-    } catch (err) {
+  } catch (err) {
     return
-      }
+  }
 
   this.emit('holepunch', peer, to)
   request.forwardRequest = null
   request.forwardResponse = encodePeer(peer)
   this.socket.forwardRequest(request, peer, to)
-                                           }
+}
 
 DHT.prototype._onquery = function (request, peer) {
   if (!validateId(request.target)) return
@@ -303,12 +288,12 @@ DHT.prototype._onquery = function (request, peer) {
       id: request.id,
       port: peer.port,
       host: peer.host
-      },
+    },
     command: request.command,
     target: request.target,
     value: request.value,
     roundtripToken: request.roundtripToken
-    }
+  }
 
   var method = request.roundtripToken ? 'update' : 'query'
 
@@ -322,11 +307,11 @@ DHT.prototype._onquery = function (request, peer) {
       value: value || null,
       nodes: nodes.encode(self.nodes.closest(request.target, 20)),
       roundtripToken: self._token(peer, 0)
-      }
+    }
 
     self.socket.response(res, peer)
-                    }
-                                    }
+  }
+}
 
 DHT.prototype._onresponse = function (response, peer) {
   if (validateId(response.id)) this._addNode(response.id, peer, response.roundtripToken)
@@ -334,8 +319,8 @@ DHT.prototype._onresponse = function (response, peer) {
   while (this.socket.inflight < this.concurrency && this._pendingRequests.length) {
     var next = this._pendingRequests.shift()
     this.socket.request(next.request, next.peer, next.callback)
-          }
-                                       }
+  }
+}
 
 DHT.prototype._onping = function (request, peer) {
   var res = {
@@ -345,7 +330,7 @@ DHT.prototype._onping = function (request, peer) {
   }
 
   this.socket.response(res, peer)
-                                   }
+}
 
 DHT.prototype._onfindnode = function (request, peer) {
   if (!validateId(request.target)) return
@@ -354,10 +339,10 @@ DHT.prototype._onfindnode = function (request, peer) {
     id: this._queryId,
     nodes: nodes.encode(this.nodes.closest(request.target, 20)),
     roundtripToken: this._token(peer, 0)
-    }
+  }
 
   this.socket.response(res, peer)
-                                       }
+}
 
 DHT.prototype._onnodeping = function (oldContacts, newContact) {
   if (!this._bootstrapped) return // bootstrapping, we've recently pinged all nodes
@@ -370,20 +355,20 @@ DHT.prototype._onnodeping = function (oldContacts, newContact) {
     if (this._tick - old.tick < 3) { // less than 10s since we talked to this peer ...
       this.nodes.add(oldContacts[i])
       continue
-                                   }
+    }
 
     reping.push(old)
-        }
+  }
 
   if (reping.length) this._reping(reping, newContact)
-                                       }
+}
 
 DHT.prototype._check = function (node) {
   var self = this
   this._request({command: '_ping', id: this._queryId}, node, false, function (err) {
     if (err) self._removeNode(node)
-                                                                               })
-                                  }
+  })
+}
 
 DHT.prototype._reping = function (oldContacts, newContact) {
   var self = this
@@ -394,19 +379,15 @@ DHT.prototype._reping = function (oldContacts, newContact) {
   function ping () {
     next = oldContacts.shift()
     if (next) self._request({command: '_ping', id: self._queryId}, next, true, afterPing)
-                }
+  }
 
   function afterPing (err) {
     if (!err) return ping()
 
     self._removeNode(next)
     self.nodes.add(newContact)
-                     }
-                                   }
-
-DHT.prototype._token = function (peer, i) {
-  return crypto.createHash('sha256').update(this._secrets[i]).update(peer.host).digest()
-                                  }
+  }
+}
 
 DHT.prototype._addNode = function (id, peer, token) {
   if (bufferEquals(id, this.id)) return
@@ -427,71 +408,72 @@ DHT.prototype._addNode = function (id, peer, token) {
 
   this.nodes.add(node)
   if (fresh) this.emit('add-node', node)
-                                    }
+}
 
 DHT.prototype._removeNode = function (node) {
   remove(this, node)
   this.nodes.remove(node.id)
   this.emit('remove-node', node)
-                                       }
+}
 
 DHT.prototype.listen = function (port, cb) {
   this.socket.listen(port, cb)
-                                  }
+}
 
 function encodePeer (peer) {
   return peer && peers.encode([peer])
-                    }
+}
 
 function decodePeer (buf) {
   try {
     return buf && peers.decode(buf)[0]
-    } catch (err) {
+  } catch (err) {
     return null
-      }
-                    }
+  }
+}
 
 function parseAddr (addr) {
   if (typeof addr === 'object' && addr) return addr
   if (typeof addr === 'number') return parseAddr(':' + addr)
   if (addr[0] === ':') return parseAddr('127.0.0.1' + addr)
   return {port: Number(addr.split(':')[1] || 3282), host: addr.split(':')[0]}
-                   }
+}
 
 function validateId (id) {
   return id && id.length === 32
-                    }
+}
 
 function arbiter (incumbant, candidate) {
   return candidate
-                 }
+}
 
 function remove (self, node) {
   if (self._bottom !== node && self._top !== node) {
     node.prev.next = node.next
     node.next.prev = node.prev
     node.next = node.prev = null
-       } else {
+  } else {
     if (self._bottom === node) {
       self._bottom = node.next
       if (self._bottom) self._bottom.prev = null
-         }
+    }
     if (self._top === node) {
       self._top = node.prev
       if (self._top) self._top.next = null
-         }
     }
-                }
+  }
+}
 
 function add (self, node) {
   if (!self._top && !self._bottom) {
     self._top = self._bottom = node
     node.prev = node.next = null
-       } else {
+  } else {
     self._top.next = node
     node.prev = self._top
     node.next = null
     self._top = node
-    }
-             }
- *)
+  }
+}
+
+*)
