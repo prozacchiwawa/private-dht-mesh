@@ -24,12 +24,29 @@ let BLANK =
        0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0
     |]
 
-type Action =
+type QueryIdAndToken =
+  { id : Buffer
+  ; roundtripToken : string
+  }
+
+and NodeIdent =
+  { id : Buffer
+  ; port : int
+  ; host : string
+  }
+
+and ChunkPair =
+  { key : NodeIdent
+  ; value : Buffer
+  }
+    
+and Action =
   | NoOp
   | Error of string
   | Close
-  | Chunk of Buffer
+  | Chunk of ChunkPair
   | EOF
+  | Warning of string
 
 and QueryStream =
   { concurrency : int
@@ -55,6 +72,13 @@ and QueryStream =
   ; _bootstrapped : bool
   ; _finalized : bool
   }
+
+and AbbrevNode =
+  { id : Buffer
+  ; port : int
+  ; host : string
+  }
+
 and Node =
   { id : Buffer
   ; port : int
@@ -64,13 +88,16 @@ and Node =
   ; distance : Buffer
   ; queried : bool
   }
+
 and DHTQuery =
   { command : Buffer
   ; id : Buffer
   ; target : Buffer
+  ; nodes : Buffer
   ; value : Buffer
   ; roundtripToken : string
   }
+
 and DHTOps<'dht> =
   { dhtId : 'dht -> Buffer
   ; nodeId : Node -> Buffer
@@ -78,15 +105,18 @@ and DHTOps<'dht> =
   ; nodeSetDistance : Buffer -> Node -> Node
   ; nodeSetReferer : Buffer -> Node -> Node
   ; dhtRequest : DHTQuery -> Node -> bool -> 'dht -> 'dht
-  ; takeQueryStream : QueryStream -> 'dht -> 'dht
   ; emit : Action -> Buffer -> 'dht -> 'dht
   ; getInFlightQueries : 'dht -> int
   ; adjustInFlightQueries : int -> 'dht -> 'dht
-  ; withQueryStream : (QueryStream -> 'dht) -> Buffer -> 'dht -> 'dht
   ; getClosest : Buffer -> int -> 'dht -> Node array
   ; getBootstrap : 'dht -> Node array
+  ; getNode : Buffer -> 'dht -> Node option
+  ; removeNode : Buffer -> 'dht -> 'dht
   ; holepunch : Node -> Buffer -> QueryStream -> 'dht -> 'dht
+  ; takeQueryStream : QueryStream -> 'dht -> 'dht
+  ; withQueryStream : (QueryStream -> 'dht) -> Buffer -> 'dht -> 'dht
   }
+
 let rec destroy dhtOps dht err self =
   if not self.destroyed then
     { self with destroyed = true }
@@ -205,7 +235,7 @@ let insertClosestSorted dhtOps node max self =
     (fun self -> self._closest)
     self
 
-let _addClosest dhtOps dht res peer self =
+let _addClosest dhtOps dht (res : QueryIdAndToken) peer self =
   if bufferCompare res.id (dhtOps.dhtId dht) <> 0 then
     let prev = getNode dhtOps res.id self._pending in
     let prev2 =
@@ -365,78 +395,107 @@ let _sendPending dhtOps dht self =
 
 let _holepunch dhtOps dht peer query self =
   dhtOps.holepunch peer peer.referer self dht
-  
-(*
-QueryStream.prototype._readMaybe = function () {
-  if (this._readableState.flowing === true) this._read()
-                                              }
-                                                }
 
-QueryStream.prototype._read = function () {
-  if (this._committing) this._sendTokens()
-  else this._sendPending()
-                                         }
+let validateId id = Buffer.length id = 32
 
-QueryStream.prototype._callback = function (err, res, peer) {
-  this._inflight--
-  if (this.destroyed) return
+let decodeNodes (buf : Buffer option) : Node array =
+  match buf with
+  | None -> Array.empty
+  | Some b -> Array.empty
 
-  if (err) {
-    if (res && res.id) {
-      var node = this._dht.nodes.get(res.id)
-      if (node) this._dht._removeNode(node)
-         }
-    this.errors++
-    this.emit('warning', err)
-    this._readMaybe()
-    return
-       }
+let _read (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : QueryStream =
+  if self._committing then
+    let (sent,dht2) = _sendTokens dhtOps dht self in
+    dht2
+  else
+    _sendPending dhtOps dht self
 
-  this.responses++
-  if (this._committing) this.commits++
-  this._addClosest(res, peer)
+let _readMaybe (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : QueryStream =
+  _read dhtOps dht self
 
-  if (this._moveCloser) {
-    var candidates = decodeNodes(res.nodes)
-    for (var i = 0; i < candidates.length; i++) this._addPending(candidates[i], peer)
-       }
+let raiseError (dhtOps : DHTOps<'dht>) (dht : 'dht) (err : string) (peer : Node option) (self : QueryStream) =
+  let self2 = { self with _inflight = self._inflight - 1 } in
+  if self2.destroyed then
+    dht
+  else
+    let performErrorRaise (dht : 'dht) : 'dht =
+      dht
+      |> dhtOps.takeQueryStream self
+      |> (fun dht ->
+           match peer with
+           | None -> (dht,None)
+           | Some node -> (dht,dhtOps.getNode node.id dht)
+         )
+      |> (fun (dht,node) ->
+           match node with
+           | None -> dht
+           | Some node -> dhtOps.removeNode node.id dht
+         )
+      |> dhtOps.takeQueryStream { self2 with errors = self2.errors + 1 }
+      |> dhtOps.emit (Warning err) self2.id
+      |> (fun dht ->
+           dhtOps.withQueryStream
+             (fun self ->
+               dhtOps.takeQueryStream
+                 (_readMaybe dhtOps dht self)
+                 dht
+             )
+             self2.id
+             dht
+         )
+    in
+    performErrorRaise dht
 
-  if (!validateId(res.id) || (this.token && !this.verbose && !this._committing)) {
-    this._readMaybe()
-    return
-       }
-
-  var data = this._map({
-    node: {
-      id: res.id,
-      port: peer.port,
-      host: peer.host
-      },
-    value: res.value
-                        })
-
-  if (!data) {
-    this._readMaybe()
-    return
-       }
-
-  this.push(data)
-                                             }
-
-function decodeNodes (buf) {
-  if (!buf) return []
-  try {
-    return nodes.decode(buf)
-    } catch (err) {
-    return []
-      }
-                     }
-
-function validateId (id) {
-  return id && id.length === 32
-                    }
-
-function echo (a) {
-  return a
-              }
-*)
+let takeResponse (dhtOps : DHTOps<'dht>) (dht : 'dht) (res : DHTQuery) (peer : Node) (self : QueryStream) : QueryStream =
+  let self2 =
+    { self with
+        responses = self.responses + 1 ;
+        commits = if self._committing then self.commits + 1 else self.commits
+    }
+  in
+  let dht2 =
+    dhtOps.takeQueryStream
+      (_addClosest
+         dhtOps
+         dht 
+         { id = res.id ; roundtripToken = res.roundtripToken }
+         peer
+         self
+      )
+      dht
+  in
+  let dht3 =
+    if self._moveCloser then
+      let candidates = decodeNodes (Some res.nodes) in
+      Array.fold
+        (fun dht node ->
+          dhtOps.withQueryStream
+            (fun self ->
+              dhtOps.takeQueryStream
+                (_addPending dhtOps dht node (Some res.id) self)
+                dht
+            )
+            self.id
+            dht
+        )
+        dht2
+        candidates
+    else
+      if not (validateId res.id) || (self.token <> None && not self._committing) then
+        dhtOps.withQueryStream
+          (fun self ->
+            dhtOps.takeQueryStream
+              (_readMaybe dhtOps dht2 self)
+              dht2
+          )
+          self.id
+          dht2
+      else
+        dht2
+  in
+  let data = 
+    { key = { id = res.id; port = peer.port; host = peer.host } ;
+      value = res.value
+    }
+  in
+  dhtOps.emit (Chunk data) self.id dht3
