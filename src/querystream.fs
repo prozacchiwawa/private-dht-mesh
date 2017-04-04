@@ -49,16 +49,13 @@ and Action =
   | Warning of string
 
 and QueryStream =
-  { concurrency : int
+  { id : Buffer
   ; query : DHTQuery
-  ; id : Buffer
-  ; target : Buffer
-  ; token : string option
+  ; token : bool
   ; holepunching : bool
   ; commits : int
   ; responses : int
   ; errors : int
-  ; verbose : bool
   ; destroyed : bool
   ; _committing : bool
   ; _closest : Node array
@@ -68,7 +65,6 @@ and QueryStream =
   ; _k : int option
   ; _inflight : int
   ; _moveCloser : bool
-  ; _bootstrap : Node array
   ; _bootstrapped : bool
   ; _finalized : bool
   }
@@ -117,6 +113,46 @@ and DHTOps<'dht> =
   ; withQueryStream : (QueryStream -> 'dht) -> Buffer -> 'dht -> 'dht
   }
 
+and Opts =
+  { token : bool
+  ; holepunching : bool
+  ; concurrency : int option
+  ; closest : Node array
+  ; nodes : Node array
+  ; k : int option
+  }
+
+let defaultOpts =
+  { token = false
+  ; holepunching = false
+  ; concurrency = None
+  ; closest = [| |]
+  ; nodes = [| |]
+  ; k = None
+  }
+
+let init id opts query =
+  { id = id
+  ; query = query
+  ; token = opts.token
+  ; holepunching = opts.holepunching
+  ; commits = 0
+  ; responses = 0
+  ; errors = 0
+  ; destroyed = false
+  ; _committing = false
+  ; _closest = opts.closest
+  ; _concurrency = opts.concurrency |> optionDefault 5
+  ; _updating = false
+  ; _pending = opts.nodes
+  ; _k =
+      if Array.length opts.nodes > 0 then None else Some (opts.k |> optionDefault 20)
+  ; _inflight = 0
+  ; _moveCloser = Array.length opts.nodes = 0
+  ; _bootstrapped = Array.length opts.nodes > 0
+  ; _finalized = false
+  }
+
 let rec destroy dhtOps dht err self =
   if not self.destroyed then
     { self with destroyed = true }
@@ -129,6 +165,7 @@ let rec destroy dhtOps dht err self =
     |> dhtOps.emit Close self.id
   else
     dht
+
 and _finalize (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : 'dht =
   if self._finalized then
     dht
@@ -245,7 +282,7 @@ let _addClosest dhtOps dht (res : QueryIdAndToken) peer self =
          { id = res.id
          ; port = peer.port
          ; host = peer.host
-         ; distance = xor res.id self.target
+         ; distance = xor res.id self.query.target
          ; roundtripToken = res.roundtripToken
          ; referer = peer.referer
          ; queried = false
@@ -259,7 +296,7 @@ let _addPending (dhtOps : DHTOps<'dht>) (dht : 'dht) (node : Node) (r : Buffer o
   if bufferCompare node.id (dhtOps.dhtId dht) <> 0 then
     let newNode =
       node
-      |> dhtOps.nodeSetDistance (xor self.target node.id)
+      |> dhtOps.nodeSetDistance (xor self.query.target node.id)
       |> (fun dht ->
             r |> optionMap (fun r -> dhtOps.nodeSetReferer r dht) |> optionDefault dht
          )
@@ -337,7 +374,9 @@ let _sendTokens (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : (int
 
 let _bootstrap dhtOps dht self =
   let selfBSTrue = { self with _bootstrapped = true } in
-  let bootstrap = dhtOps.getClosest self.target (self._k |> optionDefault infinity) dht in
+  let bootstrap =
+    dhtOps.getClosest self.query.target (self._k |> optionDefault infinity) dht
+  in
   let self2 =
     Array.fold
       (fun self node ->
@@ -373,22 +412,21 @@ let _sendPending dhtOps dht self =
     else
       dhtOps.withQueryStream
         (fun self ->
-          match self.token with
-          | Some token ->
-             let closestQueriedFalse =
-               Array.map
-                 (fun n -> { n with queried = false })
-                 self._closest
-             in
-             let selfWithQFalse =
-               { self with
-                   _closest = closestQueriedFalse ;
-                   _committing = true
-               }
-             in
-             dhtOps.takeQueryStream selfWithQFalse dht3
-          | None ->
-             _finalize dhtOps dht3 self
+          if self.token then
+            let closestQueriedFalse =
+              Array.map
+                (fun n -> { n with queried = false })
+                self._closest
+            in
+            let selfWithQFalse =
+              { self with
+                  _closest = closestQueriedFalse ;
+                  _committing = true
+              }
+            in
+            dhtOps.takeQueryStream selfWithQFalse dht3
+          else
+            _finalize dhtOps dht3 self
         )
         self.id
         dht3
@@ -481,7 +519,7 @@ let takeResponse (dhtOps : DHTOps<'dht>) (dht : 'dht) (res : DHTQuery) (peer : N
         dht2
         candidates
     else
-      if not (validateId res.id) || (self.token <> None && not self._committing) then
+      if not (validateId res.id) || (self.token && not self._committing) then
         dhtOps.withQueryStream
           (fun self ->
             dhtOps.takeQueryStream

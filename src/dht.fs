@@ -16,11 +16,6 @@ type KBucketNode =
   ; vectorClock : int
   }
 
-let (&>) a b = (a,b)
-let (+>) f (m,a) =
-  let (su,au) = f m in
-  (su,a @ au)
-  
 let min a b = Seq.min [a;b]
 let max a b = Seq.max [a;b]
 let floor x = int x
@@ -85,13 +80,16 @@ type DHT<'a,'b> =
   ; _tickInterval : int
   ; _top : 'b option
   ; _bottom : 'b option
-  ; _queryData : Map<string,QueryInfo>
+  ; _queryData : Map<int array,QueryInfo>
   }
 
 and QueryInfo =
-  { id : string
-  ; qs : QueryStream
+  { qs : QueryStream
   ; actions : QueryStream.Action list
+  }
+
+and Opts =
+  { q : QueryStream.Opts
   }
 
 let _token peer i self =
@@ -107,13 +105,30 @@ let _token peer i self =
   let _ = Crypto.updateBuffer hostBuffer sha256Hasher in
   Crypto.digestBuffer sha256Hasher
 
+let hashId id =
+  let sha256Hasher = Crypto.createHash "sha256" in
+  let _ = Crypto.updateBuffer (Buffer.fromString id "binary") sha256Hasher in
+  Crypto.digestBuffer sha256Hasher
+
+let defaultOpts =
+  { q = QueryStream.defaultOpts
+  }
+
+let query query opts self =
+  let newId = ShortId.generate () in
+  let hashedId = hashId newId in
+  { self with
+      inFlightQueries = self.inFlightQueries + 1 ;
+      _queryData =
+        Map.add
+          (Buffer.toArray hashedId)
+          { qs = QueryStream.init hashedId opts.q query
+          ; actions = []
+          }
+          self._queryData
+  }
+
 (*
-
-DHT.prototype.ready = function (cb) {
-  if (!this._bootstrapped) this.once('ready', cb)
-  else cb()
-}
-
 DHT.prototype.query = function (query, opts, cb) {
   if (typeof opts === 'function') return this.query(query, null, opts)
   return collect(queryStream(this, query, opts), cb)
@@ -476,4 +491,8 @@ function add (self, node) {
   }
 }
 
+DHT.prototype.ready = function (cb) {
+  if (!this._bootstrapped) this.once('ready', cb)
+  else cb()
+}
 *)
