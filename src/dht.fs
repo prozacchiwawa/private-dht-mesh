@@ -4,6 +4,7 @@ open Buffer
 open Crypto
 open ShortId
 open KBucket
+open DHTData
 open QueryStream
 
 type Action =
@@ -73,7 +74,7 @@ type DHT<'a,'b> =
   ; _bootstrap : string list
   ; _queryId : Buffer option
   ; _bootstrapped : bool
-  ; _pendingRequests : 'a list
+  ; _pendingRequests : 'a array
   ; _tick : int
   ; _secrets : (Buffer * Buffer)
   ; _secretsInterval : int
@@ -81,6 +82,7 @@ type DHT<'a,'b> =
   ; _top : 'b option
   ; _bottom : 'b option
   ; _queryData : Map<int array,QueryInfo>
+  ; _results : Map<int array,QueryStream.Action>
   }
 
 and QueryInfo =
@@ -90,6 +92,11 @@ and QueryInfo =
 
 and Opts =
   { q : QueryStream.Opts
+  }
+
+and Request<'r> =
+  { request : 'r
+  ; peer : Node
   }
 
 let _token peer i self =
@@ -128,19 +135,26 @@ let query query opts self =
           self._queryData
   }
 
-(*
-DHT.prototype.query = function (query, opts, cb) {
-  if (typeof opts === 'function') return this.query(query, null, opts)
-  return collect(queryStream(this, query, opts), cb)
-}
+let update q opts self =
+  let o1 = { opts with q = { opts.q with token = true } } in
+  query q o1 self
 
-DHT.prototype.update = function (query, opts, cb) {
-  if (typeof opts === 'function') return this.update(query, null, opts)
-  if (!opts) opts = {}
-  if (opts.query) opts.verbose = true
-  opts.token = true
-  return collect(queryStream(this, query, opts), cb)
-}
+let _request socketInFlight request peer important self =
+  let self2 =
+    { self with
+        _pendingRequests =
+          Array.concat [self._pendingRequests;[|{request = request; peer = peer }|]]
+    }
+  in
+  if socketInFlight >= self.concurrency ||
+       (Array.length self._pendingRequests) > 0
+  then
+    self2
+  else
+    self2
+    (* this.socket.request(request, peer, cb) *)
+
+(*
 
 DHT.prototype._pingSome = function () {
   var cnt = this.inflightQueries > 2 ? 1 : 3
@@ -226,14 +240,6 @@ DHT.prototype._ping = function (peer, cb) {
 
 DHT.prototype._holepunch = function (peer, referrer, cb) {
   this._request({command: '_ping', id: this._queryId, forwardRequest: encodePeer(peer)}, referrer, false, cb)
-}
-
-DHT.prototype._request = function (request, peer, important, cb) {
-  if (this.socket.inflight >= this.concurrency || this._pendingRequests.length) {
-    this._pendingRequests.push({request: request, peer: peer, callback: cb})
-  } else {
-    this.socket.request(request, peer, cb)
-  }
 }
 
 DHT.prototype._onrequest = function (request, peer) {

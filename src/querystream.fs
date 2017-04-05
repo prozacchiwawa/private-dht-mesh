@@ -3,6 +3,7 @@ module QueryStream
 (* https://raw.githubusercontent.com/mafintosh/dht-rpc/master/query-stream.js *)
 
 open Buffer
+open DHTData
 
 let infinity = Util.infinityInt
 
@@ -29,14 +30,8 @@ type QueryIdAndToken =
   ; roundtripToken : string
   }
 
-and NodeIdent =
-  { id : Buffer
-  ; port : int
-  ; host : string
-  }
-
 and ChunkPair =
-  { key : NodeIdent
+  { key : DHTData.NodeIdent
   ; value : Buffer
   }
     
@@ -67,22 +62,6 @@ and QueryStream =
   ; _moveCloser : bool
   ; _bootstrapped : bool
   ; _finalized : bool
-  }
-
-and AbbrevNode =
-  { id : Buffer
-  ; port : int
-  ; host : string
-  }
-
-and Node =
-  { id : Buffer
-  ; port : int
-  ; host : string
-  ; roundtripToken : string
-  ; referer : Buffer
-  ; distance : Buffer
-  ; queried : bool
   }
 
 and DHTQuery =
@@ -272,21 +251,24 @@ let insertClosestSorted dhtOps node max self =
     (fun self -> self._closest)
     self
 
-let _addClosest dhtOps dht (res : QueryIdAndToken) peer self =
+let _addClosest dhtOps dht (res : QueryIdAndToken) (peer : Node) self =
   if bufferCompare res.id (dhtOps.dhtId dht) <> 0 then
     let prev = getNode dhtOps res.id self._pending in
     let prev2 =
       match prev with
       | Some prev -> { prev with roundtripToken = res.roundtripToken }
       | None ->
-         { id = res.id
-         ; port = peer.port
-         ; host = peer.host
-         ; distance = xor res.id self.query.target
-         ; roundtripToken = res.roundtripToken
-         ; referer = peer.referer
-         ; queried = false
-         }
+         let (node : Node) =
+           { id = res.id
+           ; port = peer.port
+           ; host = peer.host
+           ; distance = xor res.id self.query.target
+           ; roundtripToken = res.roundtripToken
+           ; referer = peer.referer
+           ; queried = false
+           }
+         in
+         node
     in
     insertClosestSorted dhtOps prev2 (self._k |> optionDefault infinity) self
   else
