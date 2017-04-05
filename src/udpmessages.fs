@@ -22,6 +22,7 @@ and Action =
   | Receive of (Buffer * RInfo)
   | Send of (Buffer * RInfo)
   | SetTimeout of int
+  | Cancel of (string * Request)
   | Close
 
 and Request =
@@ -111,6 +112,17 @@ let _push tid req buf peer opts self =
           self._tids
   }
 
+let _cancel tid err self =
+  match Map.tryFind tid self._tids with
+  | Some req ->
+     { self with
+       _tids = Map.remove tid self._tids ;
+       inflight = self.inflight - 1 ;
+       events = (Cancel (err,req)) :: self.events
+     }
+  | None ->
+     self
+
 (*
 
 UDP.prototype.address = function () {
@@ -154,14 +166,6 @@ UDP.prototype.cancel = function (tid, err) {
   var i = this._tids.indexOf(tid)
   if (i > -1) this._cancel(i, err)
                                   }
-
-UDP.prototype._cancel = function (i, err) {
-  var req = this._reqs[i]
-  this._tids[i] = -1
-  this._reqs[i] = null
-  this.inflight--
-  req.callback(err || new Error('Request cancelled'), null, req.peer, req.request)
-                                   }
 
 UDP.prototype._onmessage = function (message, rinfo) {
   if (this.destroyed) return
