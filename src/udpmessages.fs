@@ -19,12 +19,22 @@ and RInfo =
 
 and Action =
   | Error of string
-  | Message of (Buffer * RInfo)
+  | Receive of (Buffer * RInfo)
+  | Send of (Buffer * RInfo)
   | SetTimeout of int
   | Close
 
 and Request =
   { request : Buffer
+  ; peer : Node
+  ; buffer : Buffer
+  ; timeout : int
+  ; tries : int
+  }
+
+and ForwardRequest =
+  { tid : int
+  ; request : Buffer
   ; peer : Node
   ; buffer : Buffer
   ; timeout : int
@@ -50,6 +60,20 @@ let optionOrThen v o =
   match o with
   | Some v -> Some v
   | None -> v
+
+let _forward request _val (from : ForwardRequest) _to self =
+  if self.destroyed then
+    self
+  else
+    let targetBuf = Buffer.zero ((Buffer.length _val) + 2) in
+    let _ = Buffer.copy 2 (Buffer.length _val) _val 0 targetBuf in
+    let hdr = (if request then 32768 else 0) ||| from.tid in
+    let _ = writeUInt16BE 0 hdr targetBuf in
+    { self with
+        events =
+          (Send (targetBuf, { address = _to.host ; port = _to.port })) ::
+            self.events
+    }
 
 let _push tid req buf peer opts self =
   let retry = opts.retry |> optionOrThen self.retry in
@@ -108,19 +132,6 @@ UDP.prototype.forwardRequest = function (val, from, to) {
 UDP.prototype.forwardResponse = function (val, from, to) {
   this._forward(false, val, from, to)
                                            }
-
-UDP.prototype._forward = function (request, val, from, to) {
-  if (this.destroyed) return
-
-  var enc = request ? this.requestEncoding : this.responseEncoding
-  var message = new Buffer(enc.encodingLength(val) + 2)
-  var header = (request ? 32768 : 0) | from.tid
-
-  message.writeUInt16BE(header, 0)
-  enc.encode(val, message, 2)
-
-  this.socket.send(message, 0, message.length, to.port, to.host)
-                                    }
 
 UDP.prototype.response = function (val, peer) {
   if (this.destroyed) return

@@ -53,3 +53,6 @@ let readUInt16BE : int -> Buffer -> int = fun at b -> failwith "JS"
 
 [<Emit("new Buffer([])")>]
 let empty : unit -> Buffer = fun _ -> failwith "JS"
+
+[<Emit("new Buffer($0)")>]
+let zero : int -> Buffer = fun n -> failwith "JS"
