@@ -5,9 +5,13 @@ module UdpMessages
 open Buffer
 open DHTData
 
-let RETRIES = [4;8;12]
+let RETRIES = [|4;8;12|]
 
-type Opts =
+type Error =
+  | ETIMEDOUT
+  | Unknown of string
+
+and Opts =
   { timeout : int option
   ; retry : int option
   }
@@ -22,31 +26,16 @@ and Action =
   | Receive of (Buffer * RInfo)
   | Send of (Buffer * RInfo)
   | SetTimeout of int
-  | Cancel of (string * Request)
+  | Cancel of (Error * Request)
   | Close
 
 and Request =
-  { request : Buffer
-  ; peer : Node
-  ; buffer : Buffer
-  ; timeout : int
-  ; tries : int
-  }
-
-and ForwardRequest =
   { tid : int
   ; request : Buffer
   ; peer : Node
   ; buffer : Buffer
   ; timeout : int
   ; tries : int
-  }
-
-and PeerRequest =
-  { port : int
-  ; host : string
-  ; tid : int
-  ; request : Request
   }
 
 and UDP =
@@ -89,7 +78,7 @@ let _request _val peer opts self =
         _tick = (self._tick + 1) &&& 0xffff
     }
 
-let _forward request _val (from : ForwardRequest) _to self =
+let _forward request _val (from : Request) _to self =
   if self.destroyed then
     self
   else
@@ -110,11 +99,12 @@ let _push tid req buf peer opts self =
       _out_req =
         Map.add
           tid
-          { request = req
+          { tid = self._tick
+          ; request = req
           ; peer = peer
           ; buffer = buf
           ; timeout = 5
-          ; tries = retry |> optionDefault (List.length RETRIES)
+          ; tries = retry |> optionDefault (Array.length RETRIES)
           }
           self._out_req
   }
@@ -130,17 +120,62 @@ let _cancel tid err self =
   | None ->
      self
 
-let response _val peer self =
+let response _val (from : Request) self =
   if self.destroyed then
     self
   else
-    let message = requestBufferFromMsgAndTid false peer.tid _val in
+    let message = requestBufferFromMsgAndTid false from.tid _val in
     { self with
         events =
-          (Send (message, { address = peer.host ; port = peer.port })) ::
+          (Send (message, { address = from.peer.host ; port = from.peer.port })) ::
             self.events
     }
 
+let _checkTimeouts self =
+  let events = ref [] in
+  let processRequest ((k,req) : (int * Request)) =
+    if req.timeout > 0 then
+      (k,{ req with timeout = req.timeout - 1 })
+    else
+      if req.tries < Array.length RETRIES then
+        let newReq =
+          { req with timeout = RETRIES.[req.tries] ; tries = req.tries + 1 }
+        in
+        let _ =
+          events :=
+            (Send (req.buffer, { address = req.peer.host ; port = req.peer.port })) ::
+              !events
+        in
+        (k,newReq)
+      else
+        let _ =
+          events := (Cancel (Unknown "canceled", req)) :: !events
+        in
+        (k,req)
+  in
+  let activeRequests =
+    Map.toList self._out_req
+    |> List.map processRequest
+    |> Map.ofSeq
+  in
+  let isCancel e =
+    match e with
+    | Cancel c -> [c]
+    | _ -> []
+  in
+  let isSend s =
+    match s with
+    | Send s -> [s]
+    | _ -> []
+  in
+  let cancels = Seq.map isCancel !events |> Seq.concat in
+  let sends = Seq.map isSend !events |> Seq.concat in
+  Seq.fold
+    (fun self (err,req) -> _cancel req.tid err self)
+    { self with
+        _out_req = activeRequests ; events = List.concat [!events;self.events]
+    }
+    cancels
 (*
 
 UDP.prototype.address = function () {
@@ -200,25 +235,6 @@ UDP.prototype._onmessage = function (message, rinfo) {
   this.emit('response', value, peer, state && state.request)
   if (state) state.callback(null, value, peer, state.request)
                                       }
-
-UDP.prototype._checkTimeouts = function () {
-  for (var i = 0; i < this._reqs.length; i++) {
-    var req = this._reqs[i]
-    if (!req) continue
-
-    if (req.timeout) {
-      req.timeout--
-      continue
-         }
-    if (req.tries < RETRIES.length) {
-      req.timeout = RETRIES[req.tries++]
-      this.socket.send(req.buffer, 0, req.buffer.length, req.peer.port, req.peer.host)
-      continue
-         }
-
-    this._cancel(i, ETIMEDOUT)
-        }
-                                          }
 
 UDP.prototype._pull = function (tid) {
   var free = this._out_req.indexOf(tid)
