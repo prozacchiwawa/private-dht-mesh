@@ -113,9 +113,9 @@ let _cancel tid err self =
   match Map.tryFind tid self._out_req with
   | Some req ->
      { self with
-       _out_req = Map.remove tid self._out_req ;
-       inflight = self.inflight - 1 ;
-       events = (Cancel (err,req)) :: self.events
+         _out_req = Map.remove tid self._out_req ;
+         inflight = self.inflight - 1 ;
+         events = (Cancel (err,req)) :: self.events
      }
   | None ->
      self
@@ -130,6 +130,11 @@ let response _val (from : Request) self =
           (Send (message, { address = from.peer.host ; port = from.peer.port })) ::
             self.events
     }
+
+let isCancel e =
+  match e with
+  | Cancel c -> [c]
+  | _ -> []
 
 let _checkTimeouts self =
   let events = ref [] in
@@ -158,11 +163,6 @@ let _checkTimeouts self =
     |> List.map processRequest
     |> Map.ofSeq
   in
-  let isCancel e =
-    match e with
-    | Cancel c -> [c]
-    | _ -> []
-  in
   let isSend s =
     match s with
     | Send s -> [s]
@@ -176,6 +176,21 @@ let _checkTimeouts self =
         _out_req = activeRequests ; events = List.concat [!events;self.events]
     }
     cancels
+
+let destroy err self =
+  let cancels =
+    self._out_req |> Map.toSeq
+    |> Seq.map (fun (k,req) -> (Unknown "Destroyed", req))
+  in
+  Seq.fold
+    (fun self (err,req) -> _cancel req.tid err self)
+    { self with
+        _out_req = Map.empty ;
+        events = List.concat [cancels |> Seq.map Cancel |> List.ofSeq;self.events] ;
+        destroyed = true
+    }
+    cancels
+
 (*
 
 UDP.prototype.address = function () {
@@ -191,17 +206,6 @@ UDP.prototype.listen = function (port, cb) {
 UDP.prototype.request = function (val, peer, opts, cb) {
   if (typeof opts === 'function') return this._request(val, peer, {}, opts)
   return this._request(val, peer, opts || {}, cb || noop)
-                                   }
-
-UDP.prototype.destroy = function (err) {
-  if (this.destroyed) return
-  this.destroyed = true
-
-  clearInterval(this._interval)
-  this.socket.close()
-  for (var i = 0; i < this._reqs.length; i++) {
-    if (this._reqs[i]) this._cancel(i, err)
-        }
                                    }
 
 UDP.prototype.cancel = function (tid, err) {

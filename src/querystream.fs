@@ -429,7 +429,7 @@ let _read (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : 'dht =
   else
     _sendPending dhtOps dht self
 
-let _readMaybe (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : QueryStream =
+let _readMaybe (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : 'dht =
   _read dhtOps dht self
 
 let raiseError (dhtOps : DHTOps<'dht>) (dht : 'dht) (err : string) (peer : Node option) (self : QueryStream) =
@@ -454,18 +454,14 @@ let raiseError (dhtOps : DHTOps<'dht>) (dht : 'dht) (err : string) (peer : Node 
       |> dhtOps.emit (Warning err) self2.id
       |> (fun dht ->
            dhtOps.withQueryStream
-             (fun self ->
-               dhtOps.takeQueryStream
-                 (_readMaybe dhtOps dht self)
-                 dht
-             )
+             (fun self -> _readMaybe dhtOps dht self)
              self2.id
              dht
          )
     in
     performErrorRaise dht
 
-let takeResponse (dhtOps : DHTOps<'dht>) (dht : 'dht) (res : DHTQuery) (peer : Node) (self : QueryStream) : QueryStream =
+let takeResponse (dhtOps : DHTOps<'dht>) (dht : 'dht) (res : DHTQuery) (peer : Node) (self : QueryStream) : 'dht =
   let self2 =
     { self with
         responses = self.responses + 1 ;
@@ -502,11 +498,7 @@ let takeResponse (dhtOps : DHTOps<'dht>) (dht : 'dht) (res : DHTQuery) (peer : N
     else
       if not (validateId res.id) || (self.token && not self._committing) then
         dhtOps.withQueryStream
-          (fun self ->
-            dhtOps.takeQueryStream
-              (_readMaybe dhtOps dht2 self)
-              dht2
-          )
+          (fun self -> _readMaybe dhtOps dht2 self)
           self.id
           dht2
       else
