@@ -42,13 +42,20 @@ and ForwardRequest =
   ; tries : int
   }
 
+and PeerRequest =
+  { port : int
+  ; host : string
+  ; tid : int
+  ; request : Request
+  }
+
 and UDP =
   { timeout : int
   ; retry : int option
   ; inflight : int
   ; destroyed : bool
   ; _tick : int
-  ; _tids : Map<string,Request>
+  ; _out_req : Map<int,Request>
   ; events : Action list
   }
 
@@ -100,7 +107,7 @@ let _push tid req buf peer opts self =
   let retry = opts.retry |> optionOrThen self.retry in
   { self with
       inflight = self.inflight + 1 ;
-      _tids =
+      _out_req =
         Map.add
           tid
           { request = req
@@ -109,19 +116,30 @@ let _push tid req buf peer opts self =
           ; timeout = 5
           ; tries = retry |> optionDefault (List.length RETRIES)
           }
-          self._tids
+          self._out_req
   }
 
 let _cancel tid err self =
-  match Map.tryFind tid self._tids with
+  match Map.tryFind tid self._out_req with
   | Some req ->
      { self with
-       _tids = Map.remove tid self._tids ;
+       _out_req = Map.remove tid self._out_req ;
        inflight = self.inflight - 1 ;
        events = (Cancel (err,req)) :: self.events
      }
   | None ->
      self
+
+let response _val peer self =
+  if self.destroyed then
+    self
+  else
+    let message = requestBufferFromMsgAndTid false peer.tid _val in
+    { self with
+        events =
+          (Send (message, { address = peer.host ; port = peer.port })) ::
+            self.events
+    }
 
 (*
 
@@ -140,17 +158,6 @@ UDP.prototype.request = function (val, peer, opts, cb) {
   return this._request(val, peer, opts || {}, cb || noop)
                                    }
 
-UDP.prototype.response = function (val, peer) {
-  if (this.destroyed) return
-
-  var message = new Buffer(this.responseEncoding.encodingLength(val) + 2)
-
-  message.writeUInt16BE(peer.tid, 0)
-  this.responseEncoding.encode(val, message, 2)
-
-  this.socket.send(message, 0, message.length, peer.port, peer.host)
-                                    }
-
 UDP.prototype.destroy = function (err) {
   if (this.destroyed) return
   this.destroyed = true
@@ -163,7 +170,7 @@ UDP.prototype.destroy = function (err) {
                                    }
 
 UDP.prototype.cancel = function (tid, err) {
-  var i = this._tids.indexOf(tid)
+  var i = this._out_req.indexOf(tid)
   if (i > -1) this._cancel(i, err)
                                   }
 
@@ -214,12 +221,12 @@ UDP.prototype._checkTimeouts = function () {
                                           }
 
 UDP.prototype._pull = function (tid) {
-  var free = this._tids.indexOf(tid)
+  var free = this._out_req.indexOf(tid)
   if (free === -1) return null
 
   var req = this._reqs[free]
   this._reqs[free] = null
-  this._tids[free] = -1
+  this._out_req[free] = -1
 
   this.inflight--
 
