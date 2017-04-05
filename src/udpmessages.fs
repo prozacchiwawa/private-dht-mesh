@@ -61,17 +61,34 @@ let optionOrThen v o =
   | Some v -> Some v
   | None -> v
 
+let requestBufferFromMsgAndTid request tid _val =
+  let targetBuf = Buffer.zero ((Buffer.length _val) + 2) in
+  let _ = Buffer.copy 2 (Buffer.length _val) _val 0 targetBuf in
+  let hdr = (if request then 32768 else 0) ||| tid in
+  let _ = writeUInt16BE 0 hdr targetBuf in
+  targetBuf
+
+let _request _val peer opts self =
+  if self.destroyed then
+    self
+  else
+    let tid = (self._tick + 1) &&& 0x32767 in
+    let message = requestBufferFromMsgAndTid true tid _val in
+    { self with
+        events =
+          (Send (message, { address = peer.host ; port = peer.port })) ::
+            self.events ;
+        _tick = (self._tick + 1) &&& 0xffff
+    }
+
 let _forward request _val (from : ForwardRequest) _to self =
   if self.destroyed then
     self
   else
-    let targetBuf = Buffer.zero ((Buffer.length _val) + 2) in
-    let _ = Buffer.copy 2 (Buffer.length _val) _val 0 targetBuf in
-    let hdr = (if request then 32768 else 0) ||| from.tid in
-    let _ = writeUInt16BE 0 hdr targetBuf in
+    let message = requestBufferFromMsgAndTid request from.tid _val in
     { self with
         events =
-          (Send (targetBuf, { address = _to.host ; port = _to.port })) ::
+          (Send (message, { address = _to.host ; port = _to.port })) ::
             self.events
     }
 
@@ -107,23 +124,6 @@ UDP.prototype.request = function (val, peer, opts, cb) {
   if (typeof opts === 'function') return this._request(val, peer, {}, opts)
   return this._request(val, peer, opts || {}, cb || noop)
                                    }
-
-UDP.prototype._request = function (val, peer, opts, cb) {
-  if (this.destroyed) return cb(new Error('Request cancelled'))
-  if (this._tick === 32767) this._tick = 0
-
-  var tid = this._tick++
-  var header = 32768 | tid
-  var message = new Buffer(this.requestEncoding.encodingLength(val) + 2)
-
-  message.writeUInt16BE(header, 0)
-  this.requestEncoding.encode(val, message, 2)
-
-  this._push(tid, val, message, peer, opts, cb)
-  this.socket.send(message, 0, message.length, peer.port, peer.host)
-
-  return tid
-                                    }
 
 UDP.prototype.forwardRequest = function (val, from, to) {
   this._forward(true, val, from, to)
