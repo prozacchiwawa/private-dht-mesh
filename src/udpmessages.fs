@@ -92,6 +92,9 @@ let _forward request _val (from : ForwardRequest) _to self =
             self.events
     }
 
+let forwardRequest _val from _to self = _forward true _val from _to self
+let forwardResponse _val from _to self = _forward false _val from _to self
+
 let _push tid req buf peer opts self =
   let retry = opts.retry |> optionOrThen self.retry in
   { self with
@@ -124,14 +127,6 @@ UDP.prototype.request = function (val, peer, opts, cb) {
   if (typeof opts === 'function') return this._request(val, peer, {}, opts)
   return this._request(val, peer, opts || {}, cb || noop)
                                    }
-
-UDP.prototype.forwardRequest = function (val, from, to) {
-  this._forward(true, val, from, to)
-                                          }
-
-UDP.prototype.forwardResponse = function (val, from, to) {
-  this._forward(false, val, from, to)
-                                           }
 
 UDP.prototype.response = function (val, peer) {
   if (this.destroyed) return

@@ -184,7 +184,7 @@ let curry f (a,b) = f a b
 let min a b = if a < b then a else b
 let max a b = if a > b then a else b
 
-let windowed n s =
+let windowed (n : int) s =
   let out = ref None in
   let i = ref 0 in
   (Seq.concat [Seq.map Some s;List.toSeq [None]])

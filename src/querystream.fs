@@ -377,7 +377,7 @@ let _bootstrap dhtOps dht self =
   else
     dhtOps.takeQueryStream self dht2
 
-let _sendPending dhtOps dht self =
+let _sendPending dhtOps (dht : 'dht) (self : QueryStream) : 'dht =
   if self.destroyed then
     dht
   else
@@ -387,8 +387,7 @@ let _sendPending dhtOps dht self =
       else
         dht
     in
-    let (sent,newSelf) = _sendAll dhtOps dht2 self._pending false false self in
-    let dht3 = dhtOps.takeQueryStream newSelf dht2 in
+    let (sent,dht3) = _sendAll dhtOps dht2 self._pending false false self in
     if sent <> 0 || self._inflight <> 0 then
       dht3
     else
@@ -423,7 +422,7 @@ let decodeNodes (buf : Buffer option) : Node array =
   | None -> Array.empty
   | Some b -> Array.empty
 
-let _read (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : QueryStream =
+let _read (dhtOps : DHTOps<'dht>) (dht : 'dht) (self : QueryStream) : 'dht =
   if self._committing then
     let (sent,dht2) = _sendTokens dhtOps dht self in
     dht2
