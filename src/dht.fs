@@ -73,7 +73,7 @@ type DHT =
   ; concurrency : int
   ; inFlightQueries : int
   ; _bootstrap : string list
-  ; _queryId : Buffer option
+  ; _queryId : int option
   ; _bootstrapped : bool
   ; _pendingRequests : (Buffer * Node) array
   ; _tick : int
@@ -162,17 +162,20 @@ let destroy self =
   else
     { self with destroyed = true ; events = Destroyed :: self.events }
 
+let makePingBody qid self =
+  Serialize.jsonObject
+    [| ("command", Serialize.jsonString "_ping") ;
+       ("id", 
+        qid
+        |> optionMap Serialize.jsonInt
+        |> optionDefault (Serialize.jsonNull ())
+       )
+    |]
+  
+
 let _check socketInFlight node self =
   let requestString =
-    Serialize.jsonObject
-      [| ("command", Serialize.jsonString "_ping") ;
-         ("id", 
-          self._queryId 
-          |> optionMap (Buffer.toString "utf-8" >> Serialize.jsonString)
-          |> optionDefault (Serialize.jsonNull ())
-         )
-      |]
-      |> Serialize.stringify
+    makePingBody self._queryId self |> Serialize.stringify
   in
   let requestBuffer = Buffer.fromString requestString "utf-8" in
   _request
@@ -204,6 +207,18 @@ let _rotateSecrets self =
   let secret = Crypto.randomBytes 32 in
   let (s0,s1) = self._secrets in
   { self with _secrets = (secret, s0) }
+
+let _ping socketInFlight peer self =
+  let requestString =
+    makePingBody self._queryId self |> Serialize.stringify
+  in
+  let requestBuffer = Buffer.fromString requestString "utf-8" in
+  _request
+    socketInFlight
+    requestBuffer
+    peer
+    false
+    self
 
 (*
 
@@ -260,10 +275,6 @@ DHT.prototype.bootstrap = function (cb) {
   function update () {
     qs._concurrency = self.inflightQueries === 1 ? self.concurrency : backgroundCon
   }
-}
-
-DHT.prototype._ping = function (peer, cb) {
-  this._request({command: '_ping', id: this._queryId}, peer, false, cb)
 }
 
 DHT.prototype._holepunch = function (peer, referrer, cb) {
