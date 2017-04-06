@@ -65,17 +65,15 @@ let requestBufferFromMsgAndTid request tid _val =
   let _ = writeUInt16BE 0 hdr targetBuf in
   targetBuf
 
-let _request _val peer opts self =
+let _request _val peer self =
   if self.destroyed then
     self
   else
-    let tid = (self._tick + 1) &&& 0x32767 in
+    let tid = (self._tick + 1) &&& 0x7fff in
     let message = requestBufferFromMsgAndTid true tid _val in
     { self with
-        events =
-          (Send (message, { address = peer.host ; port = peer.port })) ::
-            self.events ;
-        _tick = (self._tick + 1) &&& 0xffff
+        events = (Send (message, peer)) :: self.events ;
+        _tick = (self._tick + 1) &&& 0x7fff
     }
 
 let _forward request _val (from : Request) _to self =
@@ -191,68 +189,15 @@ let destroy err self =
     }
     cancels
 
-(*
-
-UDP.prototype.address = function () {
-  return this.socket.address()
-                                   }
-
-UDP.prototype.listen = function (port, cb) {
-  if (typeof port === 'function') return this.listen(0, port)
-  if (!port) port = 0
-  this.socket.bind(port, cb)
-                                  }
-
-UDP.prototype.request = function (val, peer, opts, cb) {
-  if (typeof opts === 'function') return this._request(val, peer, {}, opts)
-  return this._request(val, peer, opts || {}, cb || noop)
-                                   }
-
-UDP.prototype.cancel = function (tid, err) {
-  var i = this._out_req.indexOf(tid)
-  if (i > -1) this._cancel(i, err)
-                                  }
-
-UDP.prototype._onmessage = function (message, rinfo) {
-  if (this.destroyed) return
-
-  var request = !!(message[0] & 128)
-  var tid = message.readUInt16BE(0) & 32767
-  var enc = request ? this.requestEncoding : this.responseEncoding
-
-  try {
-    var value = enc.decode(message, 2)
-    } catch (err) {
-    this.emit('warning', err)
-    return
-      }
-
-  var peer = {port: rinfo.port, host: rinfo.address, tid: tid, request: request}
-
-  if (request) {
-    this.emit('request', value, peer)
-    return
-       }
-
-  var state = this._pull(tid)
-
-  this.emit('response', value, peer, state && state.request)
-  if (state) state.callback(null, value, peer, state.request)
-                                      }
-
-UDP.prototype._pull = function (tid) {
-  var free = this._out_req.indexOf(tid)
-  if (free === -1) return null
-
-  var req = this._reqs[free]
-  this._reqs[free] = null
-  this._out_req[free] = -1
-
-  this.inflight--
-
-  return req
-                                 }
-
-function noop () {}
-
-*)
+let _onmessage messageBuf rinfo self =
+  if self.destroyed then
+    self
+  else
+    let request = ((Buffer.at 0 messageBuf) &&& 128) <> 0 in
+    let tid = (readUInt16BE 0 messageBuf) &&& 0x7fff in
+    let l = Buffer.length messageBuf in
+    let message = Buffer.slice 2 (l - 2) messageBuf in
+    let state2 = _request message rinfo self in
+    match state2._out_req |> Map.tryFind tid with
+    | Some req -> response message req { state2 with inflight = state2.inflight - 1 }
+    | None -> state2

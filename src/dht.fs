@@ -9,7 +9,7 @@ open QueryStream
 
 type Action =
   | Ready
-  | Send of Buffer
+  | Request of Buffer * UdpMessages.RInfo
   | StreamOp of QueryStream.Action
 
 type KBucketNode =
@@ -83,6 +83,7 @@ type DHT<'a,'b> =
   ; _bottom : 'b option
   ; _queryData : Map<int array,QueryInfo>
   ; _results : Map<int array,QueryStream.Action>
+  ; events : Action list
   }
 
 and QueryInfo =
@@ -151,8 +152,7 @@ let _request socketInFlight request peer important self =
   then
     self2
   else
-    self2
-    (* this.socket.request(request, peer, cb) *)
+    { self2 with events = (Request (request,{ address = peer.host ; port = peer.port })) :: self2.events }
 
 (*
 
