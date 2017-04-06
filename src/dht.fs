@@ -11,6 +11,7 @@ type Action =
   | Ready
   | Request of Buffer * UdpMessages.RInfo
   | StreamOp of QueryStream.Action
+  | Destroyed
 
 type KBucketNode =
   { id : Buffer
@@ -83,6 +84,7 @@ type DHT<'a,'b> =
   ; _bottom : 'b option
   ; _queryData : Map<int array,QueryInfo>
   ; _results : Map<int array,QueryStream.Action>
+  ; destroyed : bool
   ; events : Action list
   }
 
@@ -152,7 +154,17 @@ let _request socketInFlight request peer important self =
   then
     self2
   else
-    { self2 with events = (Request (request,{ address = peer.host ; port = peer.port })) :: self2.events }
+    { self2 with
+        events =
+          (Request (request,{ address = peer.host ; port = peer.port })) ::
+            self2.events
+    }
+
+let destroy self =
+  if self.destroyed then
+    self
+  else
+    { self with destroyed = true ; events = Destroyed :: self.events }
 
 (*
 
@@ -182,12 +194,6 @@ DHT.prototype.ping = function (peer, cb) {
 
 DHT.prototype.toArray = function () {
   return this.nodes.toArray()
-}
-
-DHT.prototype.destroy = function () {
-  clearInterval(this._secretsInterval)
-  clearInterval(this._tickInterval)
-  this.socket.destroy()
 }
 
 DHT.prototype.address = function () {
