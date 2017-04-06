@@ -26,3 +26,7 @@ let digestBuffer : Hasher -> Buffer = fun h -> failwith "JS"
 
 [<Emit("$0.digest('hex')")>]
 let digestHex : Hasher -> string = fun h -> failwith "JS"
+
+[<Emit("$0.randomBytes($1)")>]
+let randomBytes_ : CryptoModule -> int -> Buffer = fun cm n -> failwith "JS"
+let randomBytes = randomBytes_ crypto_module

@@ -200,6 +200,11 @@ let _pingSome socketInFlight self =
     )
     self
 
+let _rotateSecrets self =
+  let secret = Crypto.randomBytes 32 in
+  let (s0,s1) = self._secrets in
+  { self with _secrets = (secret, s0) }
+
 (*
 
 DHT.prototype.holepunch = function (peer, referrer, cb) {
@@ -221,12 +226,6 @@ DHT.prototype.toArray = function () {
 
 DHT.prototype.address = function () {
   return this.socket.address()
-}
-
-DHT.prototype._rotateSecrets = function () {
-  var secret = crypto.randomBytes(32)
-  this._secrets[1] = this._secrets[0]
-  this._secrets[0] = secret
 }
 
 DHT.prototype.bootstrap = function (cb) {
