@@ -16,15 +16,10 @@ and Opts =
   ; retry : int option
   }
 
-and RInfo =
-  { address : string
-  ; port : int
-  }
-
 and Action =
   | Error of string
-  | Receive of (Buffer * RInfo)
-  | Send of (Buffer * RInfo)
+  | Receive of (Buffer * HostIdent)
+  | Send of (Buffer * HostIdent)
   | SetTimeout of int
   | Cancel of (Error * Request)
   | Close
@@ -82,7 +77,7 @@ let _forward request _val (from : Request) _to self =
     let message = requestBufferFromMsgAndTid request from.tid _val in
     { self with
         events =
-          (Send (message, { address = _to.host ; port = _to.port })) ::
+          (Send (message, { host = _to.host ; port = _to.port })) ::
             self.events
     }
 
@@ -123,7 +118,7 @@ let response _val (from : Request) self =
     let message = requestBufferFromMsgAndTid false from.tid _val in
     { self with
         events =
-          (Send (message, { address = from.peer.host ; port = from.peer.port })) ::
+          (Send (message, { host = from.peer.host ; port = from.peer.port })) ::
             self.events
     }
 
@@ -144,7 +139,7 @@ let _checkTimeouts self =
         in
         let _ =
           events :=
-            (Send (req.buffer, { address = req.peer.host ; port = req.peer.port })) ::
+            (Send (req.buffer, { host = req.peer.host ; port = req.peer.port })) ::
               !events
         in
         (k,newReq)

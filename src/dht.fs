@@ -10,9 +10,11 @@ open QueryStream
 
 type Action =
   | Ready
-  | Request of Buffer * UdpMessages.RInfo
+  | Request of Buffer * HostIdent
   | StreamOp of QueryStream.Action
   | Destroyed
+  | Holepunch of Node * HostIdent
+  | ForwardRequest of Serialize.Json * Node * HostIdent
 
 and NodeListElement =
   { peer : Node
@@ -149,7 +151,7 @@ let _request socketInFlight request peer important self =
   else
     { self2 with
         events =
-          (Request (request,{ address = peer.host ; port = peer.port })) ::
+          (Request (request,{ host = peer.host ; port = peer.port })) ::
             self2.events
     }
 
@@ -222,10 +224,10 @@ let _ping socketInFlight peer self =
  * ip6 peers as 18 bytes each.
  * Returns string
  *)
-let encodePeers peers =
+let encodePeers (peers : HostIdent array) : string =
   let (ip4peersS,ip6peersS) =
     seqPartition
-      (fun p ->
+      (fun (p : HostIdent) ->
         let parsed = IPAddr.parse p.host in
         parsed.kind () = "ipv4"
       )
@@ -322,8 +324,28 @@ let _forwardResponse request peer self =
          ; tid = peer.tid
          }
 
+let _forwardRequest request (peer : Node) self =
+  let forRequest = request |> Serialize.field "forwardRequest" in
+  match forRequest with
+  | None -> self
+  | Some req ->
+     let _to = decodePeers (Serialize.asString req) in
+     if Array.length _to = 0 then
+       self
+     else
+       let peerEnc = encodePeers [| { host = peer.host ; port = peer.port } |] in
+       request
+       |> Serialize.addField "forwardRequest" (Serialize.jsonNull ())
+       |> Serialize.addField "forwardResponse" (Serialize.jsonString peerEnc)
+       |> (fun fr ->
+            { self with
+                events =
+                  (ForwardRequest (fr,peer,{ host = _to.[0].host ; port = _to.[0].port })) ::
+                    (Holepunch (peer,{ host = _to.[0].host ; port = _to.[0].port })) :: self.events
+            }
+          )
+                        
 (*
-
 DHT.prototype.holepunch = function (peer, referrer, cb) {
   this._holepunch(parseAddr(peer), parseAddr(referrer), cb)
 }
@@ -403,22 +425,6 @@ DHT.prototype._onrequest = function (request, peer) {
   }
 
   this._onquery(request, peer)
-}
-
-DHT.prototype._forwardRequest = function (request, peer) {
-  if (request.command !== '_ping') return // only allow ping forwards right now
-
-  try {
-    var to = peers.decode(request.forwardRequest)[0]
-    if (!to) return
-  } catch (err) {
-    return
-  }
-
-  this.emit('holepunch', peer, to)
-  request.forwardRequest = null
-  request.forwardResponse = encodePeer(peer)
-  this.socket.forwardRequest(request, peer, to)
 }
 
 DHT.prototype._onquery = function (request, peer) {
