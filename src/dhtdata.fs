@@ -20,3 +20,9 @@ and HostIdent =
   { port : int
   ; host : string
   }
+and ResponseEmbryo =
+  { port : int
+  ; host : string
+  ; request : bool
+  ; tid : int
+  }

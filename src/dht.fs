@@ -260,25 +260,28 @@ let encodePeers peers =
  * Decode encoded peers.
  *)
 let decodePeers (str : string) : HostIdent array =
-  let buf = Buffer.fromString str "binary" in
-  let l = Buffer.length buf in
-  let numip4peers = Buffer.readUInt16BE 0 buf in
-  let numip6peers = ((l - 2) - (numip4peers * 6)) / 18 in
-  let peer i =
-    if i < numip4peers then
-      let start = 2 + (i * 6) in
-      let ipbuf = Buffer.slice start (start + 4) buf in
-      let port = Buffer.readUInt16BE (start + 4) buf in
-      let ipaddr = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
-      { host = ipaddr.toString () ; port = port }
-    else
-      let start = 2 + (numip4peers * 6) + (i * 18) in
-      let ipbuf = Buffer.slice start (start + 16) buf in
-      let port = Buffer.readUInt16BE (start + 16) buf in
-      let ipaddr = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
-      { host = ipaddr.toString () ; port = port }
-  in
-  Array.init (numip4peers + numip6peers) peer
+  try
+    let buf = Buffer.fromString str "binary" in
+    let l = Buffer.length buf in
+    let numip4peers = Buffer.readUInt16BE 0 buf in
+    let numip6peers = ((l - 2) - (numip4peers * 6)) / 18 in
+    let peer i =
+      if i < numip4peers then
+        let start = 2 + (i * 6) in
+        let ipbuf = Buffer.slice start (start + 4) buf in
+        let port = Buffer.readUInt16BE (start + 4) buf in
+        let ipaddr = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
+        { HostIdent.host = ipaddr.toString () ; HostIdent.port = port }
+      else
+        let start = 2 + (numip4peers * 6) + (i * 18) in
+        let ipbuf = Buffer.slice start (start + 16) buf in
+        let port = Buffer.readUInt16BE (start + 16) buf in
+        let ipaddr = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
+        { HostIdent.host = ipaddr.toString () ; HostIdent.port = port }
+    in
+    Array.init (numip4peers + numip6peers) peer
+  with _ ->
+    [| |]
 
 let _holepunch socketInFlight peer referer self =
   let requestString =
@@ -303,23 +306,21 @@ let _holepunch socketInFlight peer referer self =
     false
     self
 
-(*
-DHT.prototype._forwardResponse = function (request, peer) {
-  if (request.command !== '_ping') return // only allow ping for now
-
-  try {
-    var from = peers.decode(request.forwardResponse)[0]
-    if (!from) return
-  } catch (err) {
-    return
-  }
-
-  from.request = true
-  from.tid = peer.tid
-
-  return from
-}
-*)
+let _forwardResponse request peer self =
+  let response = request |> Serialize.field "forwardResponse" in
+  match response with
+  | None -> None
+  | Some resp ->
+     let from = decodePeers (Serialize.asString resp) in
+     if Array.length from = 0 then
+       None
+     else
+       Some
+         { host = from.[0].host
+         ; port = from.[0].port
+         ; request = true
+         ; tid = peer.tid
+         }
 
 (*
 
