@@ -9,6 +9,7 @@
     "express": "^4.15.2",
     "express-ws": "^3.0.0",
     "functional-red-black-tree": "^1.0.1",
+    "ipaddr": "0.0.9",
     "mocha": "^3.2.0",
     "q": "^1.4.1",
     "q-io": "^1.13.2",

@@ -1,5 +1,6 @@
 module DHT
 
+open Util
 open Buffer
 open Crypto
 open ShortId
@@ -17,10 +18,6 @@ and NodeListElement =
   { peer : Node
   ; tick : int
   }
-
-let min a b = Seq.min [a;b]
-let max a b = Seq.max [a;b]
-let floor x = int x
 
 (*
 function DHT (opts) {
@@ -170,8 +167,7 @@ let makePingBody qid self =
         |> optionMap Serialize.jsonInt
         |> optionDefault (Serialize.jsonNull ())
        )
-    |]
-  
+    |]  
 
 let _check socketInFlight node self =
   let requestString =
@@ -219,6 +215,63 @@ let _ping socketInFlight peer self =
     peer
     false
     self
+
+(* Peers:
+ * Number of ip4 peers as 16-bit uint.
+ * ip4 peers as 6 bytes each.
+ * ip6 peers as 18 bytes each.
+ *)
+let encodePeers peers =
+  let (ip4peersS,ip6peersS) =
+    seqPartition
+      (fun p ->
+        let parsed = IPAddr.parse p.host in
+        parsed.kind () = "ipv4"
+      )
+      peers
+  in
+  let (ip4peers,ip6peers) = (Array.ofSeq ip4peersS, Array.ofSeq ip6peersS) in
+  let numip4peers = Array.length ip4peers in
+  let numip6peers = Array.length ip6peers in
+  let fulllength = 2 + (6 * numip4peers) + (18 * numip6peers) in
+  let buffer = Buffer.zero fulllength in
+  let _ = Buffer.writeUInt16BE 0 numip4peers buffer in
+  let _ =
+    for i = 0 to numip4peers - 1 do
+      begin
+        let parsed = IPAddr.parse ip4peers.[i].host in
+        let buf = parsed.toByteArray () |> Buffer.fromArray in
+        let _ = Buffer.copy (2 + (6 * i)) (Buffer.length buf) buf 0 buffer in
+        Buffer.writeUInt16BE (4 + (6 * i)) ip4peers.[i].port buffer
+      end ;
+  let _ =
+    for i = 0 to numip6peers - 1 do
+      begin
+        let parsed = IPAddr.parse ip6peers.[i].host in
+        let buf = parsed.toByteArray () |> Buffer.fromArray in
+        let _ = Buffer.copy (2 + (6 * numip4peers) + (18 * i)) (Buffer.length buf) buf 0 buffer in
+        Buffer.writeUInt16BE (4 + (6 * numip4peers) + (18 * i)) ip6peers.[i].port buffer
+      end
+  in
+  buffer
+
+(*
+let _holepunch peer referer self =
+  let json =
+    Serialize.jsonObject
+      [| ("command", Serialize.jsonString "_ping") ;
+         ("id", 
+          self._queryId
+          |> optionMap Serialize.jsonInt
+          |> optionDefault (Serialize.jsonNull ())
+         ) ;
+         ("forwardRequest",
+          Serialize.
+      |]
+DHT.prototype._holepunch = function (peer, referrer, cb) {
+  this._request({command: '_ping', id: this._queryId, forwardRequest: encodePeer(peer)}, referrer, false, cb)}
+
+*)
 
 (*
 
@@ -275,10 +328,6 @@ DHT.prototype.bootstrap = function (cb) {
   function update () {
     qs._concurrency = self.inflightQueries === 1 ? self.concurrency : backgroundCon
   }
-}
-
-DHT.prototype._holepunch = function (peer, referrer, cb) {
-  this._request({command: '_ping', id: this._queryId, forwardRequest: encodePeer(peer)}, referrer, false, cb)
 }
 
 DHT.prototype._onrequest = function (request, peer) {
