@@ -31,7 +31,6 @@ and Action =
 
 and Request =
   { tid : int
-  ; request : Buffer
   ; peer : Node
   ; buffer : Buffer
   ; timeout : int
@@ -90,7 +89,7 @@ let _forward request _val (from : Request) _to self =
 let forwardRequest _val from _to self = _forward true _val from _to self
 let forwardResponse _val from _to self = _forward false _val from _to self
 
-let _push tid req buf peer opts self =
+let _push tid buf peer opts self =
   let retry = opts.retry |> optionOrThen self.retry in
   { self with
       inflight = self.inflight + 1 ;
@@ -98,7 +97,6 @@ let _push tid req buf peer opts self =
         Map.add
           tid
           { tid = self._tick
-          ; request = req
           ; peer = peer
           ; buffer = buf
           ; timeout = 5

@@ -13,9 +13,9 @@ type Action =
   | StreamOp of QueryStream.Action
   | Destroyed
 
-type KBucketNode =
-  { id : Buffer
-  ; vectorClock : int
+and NodeListElement =
+  { peer : Node
+  ; tick : int
   }
 
 let min a b = Seq.min [a;b]
@@ -66,22 +66,21 @@ function DHT (opts) {
        }
  *)
 
-type DHT<'a,'b> =
+type DHT =
   { id : Buffer
   ; ephermeral : bool
-  ; nodes : KBucket<Buffer,KBucketNode>
+  ; nodes : KBucket<Buffer,Node>
   ; concurrency : int
   ; inFlightQueries : int
   ; _bootstrap : string list
   ; _queryId : Buffer option
   ; _bootstrapped : bool
-  ; _pendingRequests : 'a array
+  ; _pendingRequests : (Buffer * Node) array
   ; _tick : int
   ; _secrets : (Buffer * Buffer)
   ; _secretsInterval : int
   ; _tickInterval : int
-  ; _top : 'b option
-  ; _bottom : 'b option
+  ; _bottom : NodeListElement list
   ; _queryData : Map<int array,QueryInfo>
   ; _results : Map<int array,QueryStream.Action>
   ; destroyed : bool
@@ -95,11 +94,6 @@ and QueryInfo =
 
 and Opts =
   { q : QueryStream.Opts
-  }
-
-and Request<'r> =
-  { request : 'r
-  ; peer : Node
   }
 
 let _token peer i self =
@@ -143,10 +137,12 @@ let update q opts self =
   query q o1 self
 
 let _request socketInFlight request peer important self =
+  let newRequest = (request,peer) in
   let self2 =
     { self with
         _pendingRequests =
-          Array.concat [self._pendingRequests;[|{request = request; peer = peer }|]]
+          Array.concat
+            [self._pendingRequests;[|newRequest|]]
     }
   in
   if socketInFlight >= self.concurrency ||
@@ -187,18 +183,24 @@ let _check socketInFlight node self =
     self
     (* if (err) self._removeNode(node) <-- ping reply *)
 
+let _pingSome socketInFlight self =
+  let cnt = if self.inFlightQueries > 2 then 1 else 3 in
+  let oldest = ref self._bottom in
+  List.fold
+    (fun self _ ->
+      match !oldest with
+      | hd :: tl ->
+         if self._tick - hd.tick >= 3 then
+           let last = hd in
+           let _ = oldest := tl in
+           _check socketInFlight last.peer self
+         else
+           self
+      | [] -> self
+    )
+    self
+
 (*
-
-DHT.prototype._pingSome = function () {
-  var cnt = this.inflightQueries > 2 ? 1 : 3
-  var oldest = this._bottom
-
-  while (cnt--) {
-    if (!oldest || this._tick - oldest.tick < 3) continue
-    this._check(oldest)
-    oldest = oldest.next
-  }
-}
 
 DHT.prototype.holepunch = function (peer, referrer, cb) {
   this._holepunch(parseAddr(peer), parseAddr(referrer), cb)
