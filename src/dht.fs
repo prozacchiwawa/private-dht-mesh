@@ -166,6 +166,27 @@ let destroy self =
   else
     { self with destroyed = true ; events = Destroyed :: self.events }
 
+let _check socketInFlight node self =
+  let requestString =
+    Serialize.jsonObject
+      [| ("command", Serialize.jsonString "_ping") ;
+         ("id", 
+          self._queryId 
+          |> optionMap (Buffer.toString "utf-8" >> Serialize.jsonString)
+          |> optionDefault (Serialize.jsonNull ())
+         )
+      |]
+      |> Serialize.stringify
+  in
+  let requestBuffer = Buffer.fromString requestString "utf-8" in
+  _request
+    socketInFlight
+    requestBuffer
+    node
+    false
+    self
+    (* if (err) self._removeNode(node) <-- ping reply *)
+
 (*
 
 DHT.prototype._pingSome = function () {
@@ -388,13 +409,6 @@ DHT.prototype._onnodeping = function (oldContacts, newContact) {
   }
 
   if (reping.length) this._reping(reping, newContact)
-}
-
-DHT.prototype._check = function (node) {
-  var self = this
-  this._request({command: '_ping', id: this._queryId}, node, false, function (err) {
-    if (err) self._removeNode(node)
-  })
 }
 
 DHT.prototype._reping = function (oldContacts, newContact) {
