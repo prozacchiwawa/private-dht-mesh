@@ -11,13 +11,12 @@ type Node =
   ; distance : Buffer
   ; queried : bool
   }
-and AbbrevNode =
+and NodeIdent =
   { id : Buffer
   ; port : int
   ; host : string
   }
-and NodeIdent =
-  { id : Buffer
-  ; port : int
+and HostIdent =
+  { port : int
   ; host : string
   }

@@ -220,6 +220,7 @@ let _ping socketInFlight peer self =
  * Number of ip4 peers as 16-bit uint.
  * ip4 peers as 6 bytes each.
  * ip6 peers as 18 bytes each.
+ * Returns string
  *)
 let encodePeers peers =
   let (ip4peersS,ip6peersS) =
@@ -253,11 +254,34 @@ let encodePeers peers =
         Buffer.writeUInt16BE (4 + (6 * numip4peers) + (18 * i)) ip6peers.[i].port buffer
       end
   in
-  buffer
+  Buffer.toString "binary" buffer
 
 (*
-let _holepunch peer referer self =
-  let json =
+ * Decode encoded peers.
+ *)
+let decodePeers (str : string) : HostIdent array =
+  let buf = Buffer.fromString str "binary" in
+  let l = Buffer.length buf in
+  let numip4peers = Buffer.readUInt16BE 0 buf in
+  let numip6peers = ((l - 2) - (numip4peers * 6)) / 18 in
+  let peer i =
+    if i < numip4peers then
+      let start = 2 + (i * 6) in
+      let ipbuf = Buffer.slice start (start + 4) buf in
+      let port = Buffer.readUInt16BE (start + 4) buf in
+      let ipaddr = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
+      { host = ipaddr.toString () ; port = port }
+    else
+      let start = 2 + (numip4peers * 6) + (i * 18) in
+      let ipbuf = Buffer.slice start (start + 16) buf in
+      let port = Buffer.readUInt16BE (start + 16) buf in
+      let ipaddr = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
+      { host = ipaddr.toString () ; port = port }
+  in
+  Array.init (numip4peers + numip6peers) peer
+
+let _holepunch socketInFlight peer referer self =
+  let requestString =
     Serialize.jsonObject
       [| ("command", Serialize.jsonString "_ping") ;
          ("id", 
@@ -266,11 +290,35 @@ let _holepunch peer referer self =
           |> optionDefault (Serialize.jsonNull ())
          ) ;
          ("forwardRequest",
-          Serialize.
+          encodePeers [|peer|] |> Serialize.jsonString
+         )
       |]
-DHT.prototype._holepunch = function (peer, referrer, cb) {
-  this._request({command: '_ping', id: this._queryId, forwardRequest: encodePeer(peer)}, referrer, false, cb)}
+    |> Serialize.stringify
+  in
+  let requestBuffer = Buffer.fromString requestString "utf-8" in
+  _request
+    socketInFlight
+    requestBuffer
+    referer
+    false
+    self
 
+(*
+DHT.prototype._forwardResponse = function (request, peer) {
+  if (request.command !== '_ping') return // only allow ping for now
+
+  try {
+    var from = peers.decode(request.forwardResponse)[0]
+    if (!from) return
+  } catch (err) {
+    return
+  }
+
+  from.request = true
+  from.tid = peer.tid
+
+  return from
+}
 *)
 
 (*
@@ -354,22 +402,6 @@ DHT.prototype._onrequest = function (request, peer) {
   }
 
   this._onquery(request, peer)
-}
-
-DHT.prototype._forwardResponse = function (request, peer) {
-  if (request.command !== '_ping') return // only allow ping for now
-
-  try {
-    var from = peers.decode(request.forwardResponse)[0]
-    if (!from) return
-  } catch (err) {
-    return
-  }
-
-  from.request = true
-  from.tid = peer.tid
-
-  return from
 }
 
 DHT.prototype._forwardRequest = function (request, peer) {
