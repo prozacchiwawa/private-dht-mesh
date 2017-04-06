@@ -308,9 +308,9 @@ let _holepunch socketInFlight peer referer self =
     false
     self
 
-let _forwardResponse request peer self =
-  let response = request |> Serialize.field "forwardResponse" in
-  match response with
+let _forwardResponse request (peer : Node) self =
+  let forResponse = request |> Serialize.field "forwardResponse" in
+  match forResponse with
   | None -> None
   | Some resp ->
      let from = decodePeers (Serialize.asString resp) in
@@ -318,11 +318,11 @@ let _forwardResponse request peer self =
        None
      else
        Some
-         { host = from.[0].host
-         ; port = from.[0].port
-         ; request = true
-         ; tid = peer.tid
-         }
+         (request
+          |> Serialize.addField "host" (Serialize.jsonString from.[0].host)
+          |> Serialize.addField "port" (Serialize.jsonInt from.[0].port)
+          |> Serialize.addField "request" (Serialize.jsonBool true)
+         )
 
 let _forwardRequest request (peer : Node) self =
   let forRequest = request |> Serialize.field "forwardRequest" in
