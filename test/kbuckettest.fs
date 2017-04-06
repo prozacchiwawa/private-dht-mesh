@@ -131,7 +131,7 @@ let tests =
             kbadd kb pings (newContactBuffer (Buffer.fromArray [|i|]))
           end ;
         let contact = (newContactBuffer (Buffer.fromArray [|0x15|])) in
-        let contacts = KBucket.closest kbOps !kb contact 3 None in
+        let contacts = KBucket.closest kbOps !kb contact.id 3 None in
         massert.ok (contacts.[0].id = (Buffer.fromArray [|0x11|])) ;
         massert.ok (contacts.[1].id = (Buffer.fromArray [|0x10|])) ;
         massert.ok (contacts.[2].id = (Buffer.fromArray [|0x05|])) ;
@@ -147,7 +147,7 @@ let tests =
             kbadd kb pings (newContactBuffer (Buffer.fromArray [|i|]))
           end ;
         let contact = (newContactBuffer (Buffer.fromArray [|0x11|])) in
-        let contacts = KBucket.closest kbOps !kb contact 3 None in
+        let contacts = KBucket.closest kbOps !kb contact.id 3 None in
         massert.ok (contacts.[0].id = (Buffer.fromArray [|0x11|])) ;
         massert.ok (contacts.[1].id = (Buffer.fromArray [|0x10|])) ;
         massert.ok (contacts.[2].id = (Buffer.fromArray [|0x01|])) ;
@@ -166,7 +166,7 @@ let tests =
           end ;
         kbadd kb pings (newContactBuffer (Buffer.fromArray [|0;1|])) ;
         let contact = newContactBuffer (Buffer.fromArray [|0;3|]) in
-        let contacts = KBucket.closest kbOps !kb contact 22 None in
+        let contacts = KBucket.closest kbOps !kb contact.id 22 None in
         let expectedList =
           [| [|0;1|]
           ; [|1;3|]

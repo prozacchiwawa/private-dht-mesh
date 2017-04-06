@@ -266,6 +266,7 @@ let _addClosest dhtOps dht (res : QueryIdAndToken) (peer : Node) self =
            ; roundtripToken = res.roundtripToken
            ; referer = peer.referer
            ; queried = false
+           ; vectorClock = 0
            }
          in
          node

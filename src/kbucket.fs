@@ -240,7 +240,7 @@ let rec addInternal
 let rec closest
       (ops : KBucketAbstract<'id,'a>)
       (self : KBucket<'id,'a>)
-      (contact : 'a)
+      (contact : 'id)
       (n : int)
       (bitIndexOpt : int option) : 'a array =
   let contacts = ref [||] in
@@ -248,7 +248,7 @@ let rec closest
   match (self.bucket, self.low, self.high) with
   | (None, Some low, Some high) ->
       let _ =
-        if determineBucket ops self (ops.nodeId contact) (Some bitIndex) < 0 then
+        if determineBucket ops self contact (Some bitIndex) < 0 then
           begin
             let contactsVal = closest ops low contact n (Some bitIndex) in
             if Array.length contactsVal < n then
@@ -272,7 +272,7 @@ let rec closest
       let _ = contacts := bucket in
       let distances =
         Array.map
-          (fun storedContact -> ops.distance ops (ops.nodeId storedContact) (ops.nodeId contact))
+          (fun storedContact -> ops.distance ops (ops.nodeId storedContact) contact)
           !contacts
       in
       let _ =

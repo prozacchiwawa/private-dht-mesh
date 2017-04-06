@@ -10,6 +10,7 @@ type Node =
   ; referer : Buffer
   ; distance : Buffer
   ; queried : bool
+  ; vectorClock : int
   }
 and NodeIdent =
   { id : Buffer

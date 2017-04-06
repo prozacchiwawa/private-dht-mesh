@@ -15,10 +15,31 @@ type Action =
   | Destroyed
   | Holepunch of Node * HostIdent
   | ForwardRequest of Serialize.Json * Node * HostIdent
+  | MethodCall of MethodCallData
 
 and NodeListElement =
   { peer : Node
   ; tick : int
+  }
+
+and MethodCallData =
+  { tick : int
+  ; method_ : string
+  ; command : string
+  ; query : Serialize.Json
+  ; id : int
+  ; nodes : Node array
+  ; roundtripToken : Buffer
+  }
+
+and WaitingReply =
+  { tick : int
+  ; id : int
+  ; method_ : string
+  ; command : string
+  ; query : Serialize.Json
+  ; nodes : Node array
+  ; roundtripToken : Buffer
   }
 
 (*
@@ -84,6 +105,8 @@ type DHT =
   ; _results : Map<int array,QueryStream.Action>
   ; destroyed : bool
   ; events : Action list
+  ; replacementNodes : Node list
+  ; waitingReply : Map<int,WaitingReply>
   }
 
 and QueryInfo =
@@ -344,7 +367,104 @@ let _forwardRequest request (peer : Node) self =
                     (Holepunch (peer,{ host = _to.[0].host ; port = _to.[0].port })) :: self.events
             }
           )
-                        
+
+let _reping socketInFlight oldContacts newContact self =
+  Array.fold
+    (fun self contact ->
+      let requestString =
+        makePingBody self._queryId self |> Serialize.stringify
+      in
+      let requestBuffer = Buffer.fromString requestString "utf-8" in
+      _request
+        socketInFlight
+        requestBuffer
+        contact
+        true
+        self
+    )
+    { self with replacementNodes = newContact :: self.replacementNodes }
+    oldContacts
+
+
+(* 
+-> error from socket
+    self._removeNode(next)
+    self.nodes.add(newContact)
+ *)
+
+let validateId id = Buffer.length id = 32
+
+let (kBucketOps : KBucket.KBucketAbstract<Buffer,Node>) =
+  { distance = KBucket.defaultDistance
+  ; nodeId = fun n -> n.id
+  ; arbiter = fun i e -> if i.vectorClock > e.vectorClock then i else e
+  ; keyNth = Buffer.at
+  ; keyLength = Buffer.length
+  ; idEqual = Buffer.equal
+  ; idLess = fun a b -> Buffer.compare a b < 0
+  }
+
+let _onquery request peer (self : DHT) : DHT =
+  Serialize.field "target" request
+  |> optionMap
+       (fun (target : Serialize.Json) ->
+         Buffer.fromString (Serialize.asString target) "binary"
+       )
+  |> optionMap
+       (fun (target : Buffer) ->
+         if not (validateId target) then
+           self
+         else
+           let mt =
+             (Serialize.field "id" request,
+              Serialize.field "command" request,
+              Serialize.field "value" request,
+              Serialize.field "roundtripToken" request
+             )
+           in
+           match mt with
+           | (Some id, Some command, Some value, rtt) ->
+              let query =
+                Serialize.jsonObject
+                  [| ("node",
+                      Serialize.jsonObject
+                        [| ("id", id) ;
+                           ("port", Serialize.jsonInt peer.port) ;
+                           ("host", Serialize.jsonString peer.host) ;
+                        |]
+                     ) ;
+                     ("command", command) ;
+                     ("target", Serialize.jsonString (Buffer.toString "binary" target)) ;
+                     ("value", value) ;
+                     ("roundtripToken", rtt |> optionDefault (Serialize.jsonNull ()))
+                  |]
+              in
+              let _method = if rtt = None then "query" else "update" in
+              let token = _token { host = peer.host ; port = peer.port } false self in
+              { self with
+                  _queryId = self._queryId |> optionMap (fun q -> q + 1) ;
+                  events =
+                    (MethodCall
+                       { tick = self._tick
+                       ; id = self._queryId |> optionDefault 0
+                       ; method_ = _method
+                       ; command = Serialize.asString command
+                       ; query = request
+                       ; nodes =
+                           KBucket.closest
+                             kBucketOps
+                             self.nodes
+                             target
+                             20
+                             None
+                       ; roundtripToken = token
+                       }
+                    ) :: self.events
+              }
+           | _ -> self
+       )
+  |> optionDefault self
+       
 (*
 DHT.prototype.holepunch = function (peer, referrer, cb) {
   this._holepunch(parseAddr(peer), parseAddr(referrer), cb)
@@ -427,40 +547,6 @@ DHT.prototype._onrequest = function (request, peer) {
   this._onquery(request, peer)
 }
 
-DHT.prototype._onquery = function (request, peer) {
-  if (!validateId(request.target)) return
-
-  var self = this
-  var query = {
-    node: {
-      id: request.id,
-      port: peer.port,
-      host: peer.host
-    },
-    command: request.command,
-    target: request.target,
-    value: request.value,
-    roundtripToken: request.roundtripToken
-  }
-
-  var method = request.roundtripToken ? 'update' : 'query'
-
-  if (!this.emit(method + ':' + request.command, query, callback) && !this.emit(method, query, callback)) callback()
-
-  function callback (err, value) {
-    if (err) return
-
-    var res = {
-      id: self._queryId,
-      value: value || null,
-      nodes: nodes.encode(self.nodes.closest(request.target, 20)),
-      roundtripToken: self._token(peer, 0)
-    }
-
-    self.socket.response(res, peer)
-  }
-}
-
 DHT.prototype._onresponse = function (response, peer) {
   if (validateId(response.id)) this._addNode(response.id, peer, response.roundtripToken)
 
@@ -511,25 +597,6 @@ DHT.prototype._onnodeping = function (oldContacts, newContact) {
   if (reping.length) this._reping(reping, newContact)
 }
 
-DHT.prototype._reping = function (oldContacts, newContact) {
-  var self = this
-  var next = null
-
-  ping()
-
-  function ping () {
-    next = oldContacts.shift()
-    if (next) self._request({command: '_ping', id: self._queryId}, next, true, afterPing)
-  }
-
-  function afterPing (err) {
-    if (!err) return ping()
-
-    self._removeNode(next)
-    self.nodes.add(newContact)
-  }
-}
-
 DHT.prototype._addNode = function (id, peer, token) {
   if (bufferEquals(id, this.id)) return
 
@@ -561,27 +628,11 @@ DHT.prototype.listen = function (port, cb) {
   this.socket.listen(port, cb)
 }
 
-function encodePeer (peer) {
-  return peer && peers.encode([peer])
-}
-
-function decodePeer (buf) {
-  try {
-    return buf && peers.decode(buf)[0]
-  } catch (err) {
-    return null
-  }
-}
-
 function parseAddr (addr) {
   if (typeof addr === 'object' && addr) return addr
   if (typeof addr === 'number') return parseAddr(':' + addr)
   if (addr[0] === ':') return parseAddr('127.0.0.1' + addr)
   return {port: Number(addr.split(':')[1] || 3282), host: addr.split(':')[0]}
-}
-
-function validateId (id) {
-  return id && id.length === 32
 }
 
 function arbiter (incumbant, candidate) {
