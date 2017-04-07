@@ -34,24 +34,14 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
     "should take a bootstrap reply" =>
       fun donef ->
         let pushPacket (d : DHT.DHT) (l : DHT.Action) : DHT.DHT =
+          let _ = printfn "event %A" l in
           match l with
-          | DHT.Request (b,n) ->
-             match Serialize.field "id" b with
-             | Some id ->
-                let (nid : DHTData.NodeIdent) =
-                  { id = Buffer.fromString (Serialize.asString id) "binary" 
-                  ; host = n.host
-                  ; port = n.port
-                  }
-                in
-                DHT._onrequest b nid d
-             | None -> d
+          | DHT.Request (b,n) -> DHT._onrequest b n d
           | DHT.Response (b,n) -> DHT._onresponse 0 b n d
           | _ -> d
         in
         let pushFrom ((b,d) : (DHT.DHT * DHT.DHT)) : (DHT.DHT * DHT.DHT) =
           let events = List.rev b.events in
-          let _ = printfn "events %A" events in
           let newb = { b with events = [] } in
           (newb, List.fold pushPacket d events)
         in
@@ -75,7 +65,7 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
               let d = DHT.tick 0 dht in
               let b = DHT.tick 0 bst in
               let (b1,d1) = pushFrom (b,d) in
-              pushFrom (d,b)
+              pushFrom (d1,b1)
             )
             (dht2,bst1)
             (Array.init 50 id)

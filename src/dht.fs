@@ -172,13 +172,15 @@ let _bootstrap _addNode (self : DHT) =
 
 let _token (peer : NodeIdent) i self =
   let sha256Hasher = Crypto.createHash "sha256" in
+  let _ = dump "sha256hasher" sha256Hasher in
   let theSecret =
     match (self._secrets,i) with
     | ((s,_),false) -> s
     | ((_,s),_) -> s
   in
+  let _ = dump "peer" peer in
   let addr = IPAddr.parse peer.host in
-  let hostBuffer = Buffer.fromArray (addr.toByteArray ()) in
+  let hostBuffer = Buffer.fromArray (IPAddr.toByteArray addr) in
   let _ = Crypto.updateBuffer theSecret sha256Hasher in
   let _ = Crypto.updateBuffer hostBuffer sha256Hasher in
   Crypto.digestBuffer sha256Hasher
@@ -326,7 +328,7 @@ let encodePeers (peers : NodeIdent array) : string =
     seqPartition
       (fun (p : NodeIdent) ->
         let parsed = IPAddr.parse p.host in
-        parsed.kind () = "ipv4"
+        IPAddr.kind parsed = "ipv4"
       )
       peers
   in
@@ -341,7 +343,7 @@ let encodePeers (peers : NodeIdent array) : string =
       begin
         let start = 2 + 38 * i in
         let parsed = IPAddr.parse ip4peers.[i].host in
-        let buf = parsed.toByteArray () |> Buffer.fromArray in
+        let buf = IPAddr.toByteArray parsed |> Buffer.fromArray in
         let _ = Buffer.writeUInt16BE start ip4peers.[i].port buffer in
         let _ = Buffer.copy (start + 2) (Buffer.length buf) buf 0 buffer in
         Buffer.copy
@@ -354,7 +356,7 @@ let encodePeers (peers : NodeIdent array) : string =
       begin
         let start = 2 + (38 * numip4peers) + (50 * i) in
         let parsed = IPAddr.parse ip6peers.[i].host in
-        let buf = parsed.toByteArray () |> Buffer.fromArray in
+        let buf = IPAddr.toByteArray parsed |> Buffer.fromArray in
         let _ = Buffer.writeUInt16BE start ip6peers.[i].port buffer in
         let _ =
           Buffer.copy
@@ -384,9 +386,9 @@ let decodePeers (str : string) : NodeIdent array =
         let port = Buffer.readUInt16BE start buf in
         let ipbuf = Buffer.slice (start + 2) (start + 6) buf in
         let idbuf = Buffer.slice (start + 6) (start + 38) buf in
-        let ipaddr = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
+        let ipaddr_ = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
         { NodeIdent.id = idbuf
-        ; NodeIdent.host = ipaddr.toString ()
+        ; NodeIdent.host = IPAddr.toString ipaddr_
         ; NodeIdent.port = port
         }
       else
@@ -394,9 +396,9 @@ let decodePeers (str : string) : NodeIdent array =
         let port = Buffer.readUInt16BE start buf in
         let ipbuf = Buffer.slice (start + 2) (start + 18) buf in
         let idbuf = Buffer.slice (start + 18) (start + 50) buf in
-        let ipaddr = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
+        let ipaddr_ = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
         { NodeIdent.id = idbuf
-        ; NodeIdent.host = ipaddr.toString ()
+        ; NodeIdent.host = IPAddr.toString ipaddr_
         ; NodeIdent.port = port
         }
     in
@@ -598,7 +600,10 @@ let _onping request (peer : NodeIdent) self =
       |]
   { self with events = (Response (res, peer)) :: self.events }
 
-let _onfindnode request (peer : NodeIdent) self =
+let _onfindnode
+      (request : Serialize.Json)
+      (peer : NodeIdent)
+      (self : DHT) : DHT =
   let token = Buffer.toString "binary" (_token peer false self) in
   Serialize.field "target" request
   |> optionMap
@@ -644,6 +649,7 @@ let _onfindnode request (peer : NodeIdent) self =
   |> optionDefault self
 
 let _onrequest request (peer : NodeIdent) self =
+  let _ = dump "_onrequest" request in
   Serialize.field "target" request
   |> optionMap
        (fun (target : Serialize.Json) ->
