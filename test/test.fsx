@@ -78,7 +78,7 @@ let tests : (string * (It list)) list =
             end
       ]
   ; "k-bucket" => KBucketTest.tests
-  ; "dht" => QueryStreamTest.tests
+  ; "dht" => DHTTest.tests
   ]
 
 let _ =
