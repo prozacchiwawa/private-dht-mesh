@@ -647,7 +647,7 @@ let _removeNode socketInFlight (node : Node) (self : DHT) : DHT =
     }
 
 let _addNode socketInFlight (id : Buffer) (peer : HostIdent) (token : Buffer option) (self : DHT) : DHT =
-  if Buffer.equal id self.id then
+  if not (Buffer.equal id self.id) then
     let node = KBucket.get kBucketOps self.nodes id None in
     let (fresh,defNode) =
       match node with
