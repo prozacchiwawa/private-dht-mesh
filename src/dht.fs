@@ -12,13 +12,12 @@ open QueryStream
 
 type Action =
   | Ready
-  | Request of Buffer * HostIdent
-  | StreamOp of QueryStream.Action
+  | Request of Serialize.Json * NodeIdent
   | Destroyed
-  | Holepunch of Node * HostIdent
-  | ForwardRequest of Serialize.Json * Node * HostIdent
+  | Holepunch of NodeIdent * NodeIdent
+  | ForwardRequest of Serialize.Json * NodeIdent * NodeIdent
   | MethodCall of MethodCallData
-  | Response of Buffer * HostIdent
+  | Response of Serialize.Json * NodeIdent
   | AddNode of Node
   | RemoveNode of Node
 
@@ -99,7 +98,7 @@ type DHT =
   ; _bootstrap : NodeIdent array
   ; _queryId : int option
   ; _bootstrapped : bool
-  ; _pendingRequests : (Buffer * NodeIdent) array
+  ; _pendingRequests : (Serialize.Json * NodeIdent) array
   ; _tick : int
   ; _secrets : (Buffer * Buffer)
   ; _secretsInterval : int
@@ -159,12 +158,19 @@ let init opts =
 let _bootstrap _addNode (self : DHT) =
   Array.fold
     (fun self (node : NodeIdent) ->
-      _addNode 0 node.id { host = node.host ; port = node.port } None self
+      _addNode
+        0
+        { NodeIdent.id = node.id
+        ; NodeIdent.host = node.host
+        ; NodeIdent.port = node.port
+        }
+        None
+        self
     )
     self
     self._bootstrap
 
-let _token peer i self =
+let _token (peer : NodeIdent) i self =
   let sha256Hasher = Crypto.createHash "sha256" in
   let theSecret =
     match (self._secrets,i) with
@@ -187,7 +193,12 @@ let (kBucketOps : KBucket.KBucketAbstract<Buffer,Node>) =
   ; idLess = fun a b -> Buffer.compare a b < 0
   }
 
-let _request socketInFlight request (peer : NodeIdent) important self =
+let _request
+      socketInFlight
+      (request : Serialize.Json)
+      (peer : NodeIdent)
+      (important : bool)
+      (self : DHT) : DHT =
   let newRequest = (request,peer) in
   let self2 =
     { self with
@@ -203,15 +214,24 @@ let _request socketInFlight request (peer : NodeIdent) important self =
   else
     { self2 with
         events =
-          (Request (request,{ host = peer.host ; port = peer.port })) ::
+          (Request
+             (request,
+              { id = peer.id 
+              ; host = peer.host
+              ; port = peer.port 
+              }
+             )
+          ) ::
             self2.events
     }
 
-let query socketInFlight query opts self =
+let query
+      socketInFlight
+      (query : Serialize.Json)
+      opts
+      (self : DHT) : DHT =
   let newId = ShortId.generate () in
   let hashedId = hashId newId in
-  let queryString = Serialize.stringify query in
-  let queryBuffer = Buffer.fromString queryString "utf-8" in
   let target =
     Serialize.field "target" query
     |> optionDefault (Serialize.jsonNull ())
@@ -220,7 +240,15 @@ let query socketInFlight query opts self =
   in
   let closest = KBucket.closest kBucketOps self.nodes target 1 None in
   if Array.length closest > 0 then
-    _request socketInFlight queryBuffer { id = target ; host = closest.[0].host ; port = closest.[0].port } true self
+    _request
+      socketInFlight
+      query
+      { id = target
+      ; host = closest.[0].host
+      ; port = closest.[0].port
+      }
+      true
+      self
   else
     self
 
@@ -245,13 +273,9 @@ let makePingBody qid self =
     |]  
 
 let _check socketInFlight node self =
-  let requestString =
-    makePingBody self._queryId self |> Serialize.stringify
-  in
-  let requestBuffer = Buffer.fromString requestString "utf-8" in
   _request
     socketInFlight
-    requestBuffer
+    (makePingBody self._queryId self)
     node
     false
     self
@@ -280,28 +304,27 @@ let _rotateSecrets self =
   let (s0,s1) = self._secrets in
   { self with _secrets = (secret, s0) }
 
-let _ping socketInFlight peer self =
-  let requestString =
-    makePingBody self._queryId self |> Serialize.stringify
-  in
-  let requestBuffer = Buffer.fromString requestString "utf-8" in
+let _ping
+      socketInFlight
+      (peer : NodeIdent)
+      (self : DHT) : DHT =
   _request
     socketInFlight
-    requestBuffer
+    (makePingBody self._queryId self)
     peer
     false
     self
 
 (* Peers:
  * Number of ip4 peers as 16-bit uint.
- * ip4 peers as 6 bytes each.
- * ip6 peers as 18 bytes each.
+ * ip4 peers as 6 bytes each plus sha256.
+ * ip6 peers as 18 bytes each plus sha256.
  * Returns string
  *)
-let encodePeers (peers : HostIdent array) : string =
+let encodePeers (peers : NodeIdent array) : string =
   let (ip4peersS,ip6peersS) =
     seqPartition
-      (fun (p : HostIdent) ->
+      (fun (p : NodeIdent) ->
         let parsed = IPAddr.parse p.host in
         parsed.kind () = "ipv4"
       )
@@ -310,24 +333,38 @@ let encodePeers (peers : HostIdent array) : string =
   let (ip4peers,ip6peers) = (Array.ofSeq ip4peersS, Array.ofSeq ip6peersS) in
   let numip4peers = Array.length ip4peers in
   let numip6peers = Array.length ip6peers in
-  let fulllength = 2 + (6 * numip4peers) + (18 * numip6peers) in
+  let fulllength = 2 + (38 * numip4peers) + (50 * numip6peers) in
   let buffer = Buffer.zero fulllength in
   let _ = Buffer.writeUInt16BE 0 numip4peers buffer in
   let _ =
     for i = 0 to numip4peers - 1 do
       begin
+        let start = 2 + 38 * i in
         let parsed = IPAddr.parse ip4peers.[i].host in
         let buf = parsed.toByteArray () |> Buffer.fromArray in
-        let _ = Buffer.copy (2 + (6 * i)) (Buffer.length buf) buf 0 buffer in
-        Buffer.writeUInt16BE (4 + (6 * i)) ip4peers.[i].port buffer
+        let _ = Buffer.writeUInt16BE start ip4peers.[i].port buffer in
+        let _ = Buffer.copy (start + 2) (Buffer.length buf) buf 0 buffer in
+        Buffer.copy
+          (start + 6)
+          (Buffer.length ip4peers.[i].id)
+          ip4peers.[i].id 0 buffer
       end ;
   let _ =
     for i = 0 to numip6peers - 1 do
       begin
+        let start = 2 + (38 * numip4peers) + (50 * i) in
         let parsed = IPAddr.parse ip6peers.[i].host in
         let buf = parsed.toByteArray () |> Buffer.fromArray in
-        let _ = Buffer.copy (2 + (6 * numip4peers) + (18 * i)) (Buffer.length buf) buf 0 buffer in
-        Buffer.writeUInt16BE (4 + (6 * numip4peers) + (18 * i)) ip6peers.[i].port buffer
+        let _ = Buffer.writeUInt16BE start ip6peers.[i].port buffer in
+        let _ =
+          Buffer.copy
+            (start + 2)
+            (Buffer.length buf) buf 0 buffer
+        in
+        Buffer.copy
+          (start + 18)
+          (Buffer.length ip6peers.[i].id)
+          ip6peers.[i].id 0 buffer
       end
   in
   Buffer.toString "binary" buffer
@@ -335,32 +372,44 @@ let encodePeers (peers : HostIdent array) : string =
 (*
  * Decode encoded peers.
  *)
-let decodePeers (str : string) : HostIdent array =
+let decodePeers (str : string) : NodeIdent array =
   try
     let buf = Buffer.fromString str "binary" in
     let l = Buffer.length buf in
     let numip4peers = Buffer.readUInt16BE 0 buf in
-    let numip6peers = ((l - 2) - (numip4peers * 6)) / 18 in
+    let numip6peers = ((l - 2) - (numip4peers * 38)) / 18 in
     let peer i =
       if i < numip4peers then
-        let start = 2 + (i * 6) in
-        let ipbuf = Buffer.slice start (start + 4) buf in
-        let port = Buffer.readUInt16BE (start + 4) buf in
+        let start = 2 + (i * 38) in
+        let port = Buffer.readUInt16BE start buf in
+        let ipbuf = Buffer.slice (start + 2) (start + 6) buf in
+        let idbuf = Buffer.slice (start + 6) (start + 38) buf in
         let ipaddr = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
-        { HostIdent.host = ipaddr.toString () ; HostIdent.port = port }
+        { NodeIdent.id = idbuf
+        ; NodeIdent.host = ipaddr.toString ()
+        ; NodeIdent.port = port
+        }
       else
-        let start = 2 + (numip4peers * 6) + (i * 18) in
-        let ipbuf = Buffer.slice start (start + 16) buf in
-        let port = Buffer.readUInt16BE (start + 16) buf in
+        let start = 2 + (numip4peers * 38) + (i * 50) in
+        let port = Buffer.readUInt16BE start buf in
+        let ipbuf = Buffer.slice (start + 2) (start + 18) buf in
+        let idbuf = Buffer.slice (start + 18) (start + 50) buf in
         let ipaddr = IPAddr.fromByteArray (Buffer.toArray ipbuf) in
-        { HostIdent.host = ipaddr.toString () ; HostIdent.port = port }
+        { NodeIdent.id = idbuf
+        ; NodeIdent.host = ipaddr.toString ()
+        ; NodeIdent.port = port
+        }
     in
     Array.init (numip4peers + numip6peers) peer
   with _ ->
     [| |]
 
-let _holepunch socketInFlight peer referer self =
-  let requestString =
+let _holepunch
+      socketInFlight
+      (peer : NodeIdent)
+      referer
+      (self : DHT) : DHT =
+  let request =
     Serialize.jsonObject
       [| ("command", Serialize.jsonString "_ping") ;
          ("id", 
@@ -372,17 +421,17 @@ let _holepunch socketInFlight peer referer self =
           encodePeers [|peer|] |> Serialize.jsonString
          )
       |]
-    |> Serialize.stringify
-  in
-  let requestBuffer = Buffer.fromString requestString "utf-8" in
   _request
     socketInFlight
-    requestBuffer
+    request
     referer
     false
     self
 
-let _forwardResponse request (peer : Node) self =
+let _forwardResponse
+      (request : Serialize.Json)
+      (peer : NodeIdent)
+      (self : DHT) : DHT =
   let forResponse = request |> Serialize.field "forwardResponse" in
   match forResponse with
   | None -> self
@@ -391,17 +440,26 @@ let _forwardResponse request (peer : Node) self =
      if Array.length from = 0 then
        self
      else
-       let reqString =
+       let req =
          request
          |> Serialize.addField "host" (Serialize.jsonString from.[0].host)
          |> Serialize.addField "port" (Serialize.jsonInt from.[0].port)
          |> Serialize.addField "request" (Serialize.jsonBool true)
-         |> Serialize.stringify
        in
-       let reqBuffer = Buffer.fromString reqString "utf-8" in
-       { self with events = (Response (reqBuffer, { host = peer.host ; port = peer.port })) :: self.events }
+       { self with
+           events =
+             (Response
+                (req,
+                 { id = peer.id
+                 ; host = peer.host
+                 ; port = peer.port
+                 }
+                )
+             ) ::
+               self.events
+       }
 
-let _forwardRequest request (peer : Node) self =
+let _forwardRequest request (peer : NodeIdent) self =
   let forRequest = request |> Serialize.field "forwardRequest" in
   match forRequest with
   | None -> self
@@ -410,15 +468,24 @@ let _forwardRequest request (peer : Node) self =
      if Array.length _to = 0 then
        self
      else
-       let peerEnc = encodePeers [| { host = peer.host ; port = peer.port } |] in
+       let peerEnc =
+         encodePeers
+           [| { id = peer.id ; host = peer.host ; port = peer.port } |]
+       in
        request
        |> Serialize.addField "forwardRequest" (Serialize.jsonNull ())
        |> Serialize.addField "forwardResponse" (Serialize.jsonString peerEnc)
        |> (fun fr ->
+            let (fto : NodeIdent) =
+              { NodeIdent.id = _to.[0].id
+              ; NodeIdent.host = _to.[0].host
+              ; NodeIdent.port = _to.[0].port
+              }
+            in
             { self with
                 events =
-                  (ForwardRequest (fr,peer,{ host = _to.[0].host ; port = _to.[0].port })) ::
-                    (Holepunch (peer,{ host = _to.[0].host ; port = _to.[0].port })) :: self.events
+                  (ForwardRequest (fr,peer,fto)) ::
+                    (Holepunch (peer,fto)) :: self.events
             }
           )
 
@@ -429,13 +496,9 @@ let _reping
       (self : DHT) : DHT =
   Array.fold
     (fun (self : DHT) (contact : Node) ->
-      let requestString =
-        makePingBody self._queryId self |> Serialize.stringify
-      in
-      let requestBuffer = Buffer.fromString requestString "utf-8" in
       _request
         socketInFlight
-        requestBuffer
+        (makePingBody self._queryId self)
         { id = contact.id ; host = contact.host ; port = contact.port }
         true
         self
@@ -452,7 +515,7 @@ let _reping
 
 let validateId id = Buffer.length id = 32
 
-let _onquery request peer (self : DHT) : DHT =
+let _onquery request (peer : NodeIdent) (self : DHT) : DHT =
   Serialize.field "target" request
   |> optionMap
        (fun (target : Serialize.Json) ->
@@ -488,7 +551,15 @@ let _onquery request peer (self : DHT) : DHT =
                   |]
               in
               let _method = if rtt = None then "query" else "update" in
-              let token = _token { host = peer.host ; port = peer.port } false self in
+              let token =
+                _token
+                  { id = peer.id
+                  ; host = peer.host
+                  ; port = peer.port
+                  }
+                  false
+                  self
+              in
               { self with
                   _queryId = self._queryId |> optionMap (fun q -> q + 1) ;
                   events =
@@ -513,19 +584,21 @@ let _onquery request peer (self : DHT) : DHT =
        )
   |> optionDefault self
 
-let _onping request peer self =
+let _onping request (peer : NodeIdent) self =
   let token = Buffer.toString "binary" (_token peer false self) in
-  let resString = 
+  let res =
     Serialize.jsonObject
-      [| ("id", self._queryId |> optionMap Serialize.jsonInt |> optionDefault (Serialize.jsonNull ())) ;
+      [| ("id",
+          self._queryId
+          |> optionMap Serialize.jsonInt
+          |> optionDefault (Serialize.jsonNull ())
+         ) ;
          ("value", Serialize.jsonString (encodePeers [|peer|])) ;
          ("roundtripToken", Serialize.jsonString token)
-      |] |> Serialize.stringify
-  in
-  let resBuffer = Buffer.fromString resString "utf-8" in
-  { self with events = (Response (resBuffer, peer)) :: self.events }
+      |]
+  { self with events = (Response (res, peer)) :: self.events }
 
-let _onfindnode request peer self =
+let _onfindnode request (peer : NodeIdent) self =
   let token = Buffer.toString "binary" (_token peer false self) in
   Serialize.field "target" request
   |> optionMap
@@ -537,9 +610,13 @@ let _onfindnode request peer self =
          if not (validateId target) then
            self
          else
-           let resString =
+           let res =
              Serialize.jsonObject
-               [| ("id", self._queryId |> optionMap Serialize.jsonInt |> optionDefault (Serialize.jsonNull ())) ;
+               [| ("id",
+                   self._queryId
+                   |> optionMap Serialize.jsonInt
+                   |> optionDefault (Serialize.jsonNull ())
+                  ) ;
                   ("nodes",
                    Serialize.jsonString
                      (encodePeers
@@ -549,19 +626,24 @@ let _onfindnode request peer self =
                            target
                            20
                            None
-                         |> Array.map (fun n -> { host = n.host ; port = n.port })
+                         |> Array.map
+                              (fun n ->
+                                { id = n.id
+                                ; host = n.host
+                                ; port = n.port
+                                }
+                              )
                         )
                      )
                   ) ;
                   ("roundtripToken", Serialize.jsonString token)
-               |] |> Serialize.stringify
+               |]
            in
-           let resBuffer = Buffer.fromString resString "utf-8" in
-           { self with events = (Response (resBuffer, peer)) :: self.events }
+           { self with events = (Response (res, peer)) :: self.events }
        )
   |> optionDefault self
 
-let _onrequest request peer self =
+let _onrequest request (peer : NodeIdent) self =
   Serialize.field "target" request
   |> optionMap
        (fun (target : Serialize.Json) ->
@@ -596,11 +678,37 @@ let _onrequest request peer self =
            else if Serialize.field "forwardResponse" request <> None then
              _forwardResponse request peer self
            else
-             match Serialize.field "command" request |> optionMap Serialize.asString with
-             | Some "ping" -> _onping request { host = peer.host ; port = peer.port } self
-             | Some "_find_node" -> _onfindnode request { host = peer.host ; port = peer.port } self
-             | _ -> _onquery request { host = peer.host ; port = peer.port } self
+             let m =
+               Serialize.field "command" request
+               |> optionMap Serialize.asString
+             in
+             match m with
+             | Some "ping" ->
+                _onping
+                  request
+                  { NodeIdent.id = peer.id
+                  ; NodeIdent.host = peer.host
+                  ; NodeIdent.port = peer.port
+                  }
+                  self
+             | Some "_find_node" ->
+                _onfindnode
+                  request
+                  { NodeIdent.id = peer.id
+                  ; NodeIdent.host = peer.host
+                  ; NodeIdent.port = peer.port
+                  }
+                  self
+             | _ ->
+                _onquery
+                  request
+                  { NodeIdent.id = peer.id
+                  ; NodeIdent.host = peer.host
+                  ; NodeIdent.port = peer.port
+                  }
+                  self
        )
+  |> optionDefault self
 
 let add (node : Node) (self : DHT) : DHT =
   { self with
@@ -646,22 +754,26 @@ let _removeNode socketInFlight (node : Node) (self : DHT) : DHT =
         events = (RemoveNode node) :: self.events
     }
 
-let _addNode socketInFlight (id : Buffer) (peer : HostIdent) (token : Buffer option) (self : DHT) : DHT =
-  if not (Buffer.equal id self.id) then
-    let node = KBucket.get kBucketOps self.nodes id None in
+let _addNode
+      socketInFlight
+      (peer : NodeIdent)
+      (token : Buffer option)
+      (self : DHT) : DHT =
+  if not (Buffer.equal peer.id self.id) then
+    let node = KBucket.get kBucketOps self.nodes peer.id None in
     let (fresh,defNode) =
       match node with
       | Some node -> (false,node)
       | None ->
          (true,
-          { id = id
+          { id = peer.id
           ; queried = false
-          ; distance = Buffer.fromArray (KBucket.defaultDistance kBucketOps id self.id)
+          ; distance = Buffer.fromArray (KBucket.defaultDistance kBucketOps peer.id self.id)
           ; port = peer.port
           ; host = peer.host
           ; roundtripToken = token |> optionMap (Buffer.toString "binary") |> optionDefault ""
           ; vectorClock = self._tick
-          ; referer = id
+          ; referer = peer.id
           }
          )
     in
@@ -679,7 +791,11 @@ let _addNode socketInFlight (id : Buffer) (peer : HostIdent) (token : Buffer opt
   else
     self
 
-let _onresponse socketInFlight response peer (self0 : DHT) =
+let _onresponse
+      socketInFlight
+      (response : Serialize.Json)
+      (peer : NodeIdent)
+      (self0 : DHT) : DHT =
   let rec doPendingInner n self =
     if n < 1 || Array.length self._pendingRequests < 1 then
       self
@@ -687,7 +803,17 @@ let _onresponse socketInFlight response peer (self0 : DHT) =
       let (req, node) = self._pendingRequests.[0] in
       doPendingInner
         (n-1)
-        { self with events = (Request (req, { host = node.host ; port = node.port })) :: self.events }
+        { self with
+            events =
+              (Request
+                 (req,
+                  { id = node.id
+                  ; host = node.host
+                  ; port = node.port
+                  }
+                 )
+              ) :: self.events
+        }
   in
   let (self : DHT) = { self0 with _bootstrapped = true } in
   Serialize.field "target" response
@@ -718,13 +844,13 @@ let _onresponse socketInFlight response peer (self0 : DHT) =
                 (min socketInFlight self.concurrency)
                 (_addNode
                    socketInFlight
-                   (Buffer.fromString (Serialize.asString id) "binary")
                    peer
                    rtt
                    self
                 )
            | (None, _) -> self
        )
+  |> optionDefault self
 
 let tick socketInFlight self =
   let nextTick = self._tick + 1 in
