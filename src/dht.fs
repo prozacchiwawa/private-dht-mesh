@@ -93,11 +93,10 @@ function DHT (opts) {
 
 type DHT =
   { id : Buffer
-  ; ephermeral : bool
   ; nodes : KBucket<Buffer,Node>
   ; concurrency : int
   ; inFlightQueries : int
-  ; _bootstrap : string list
+  ; _bootstrap : NodeIdent array
   ; _queryId : int option
   ; _bootstrapped : bool
   ; _pendingRequests : (Buffer * NodeIdent) array
@@ -106,7 +105,6 @@ type DHT =
   ; _secretsInterval : int
   ; _tickInterval : int
   ; _bottom : NodeListElement list
-  ; _queryData : Map<int array,QueryInfo>
   ; _results : Map<int array,QueryStream.Action>
   ; destroyed : bool
   ; events : Action list
@@ -121,7 +119,50 @@ and QueryInfo =
 
 and Opts =
   { q : QueryStream.Opts
+  ; id : Buffer option
+  ; bootstrap : NodeIdent array
   }
+
+let hashId id =
+  let sha256Hasher = Crypto.createHash "sha256" in
+  let _ = Crypto.updateBuffer (Buffer.fromString id "binary") sha256Hasher in
+  Crypto.digestBuffer sha256Hasher
+
+let defaultOpts =
+  { q = QueryStream.defaultOpts
+  ; id = None
+  ; bootstrap = [| |]
+  }
+
+let init opts =
+  let id = opts.id |> optionDefault (hashId (ShortId.generate ()))
+  { id = id
+  ; nodes = KBucket.init id
+  ; concurrency = 16
+  ; inFlightQueries = 0
+  ; _queryId = None
+  ; _bootstrap = opts.bootstrap
+  ; _bootstrapped = false
+  ; _pendingRequests = [| |]
+  ; _tick = 0
+  ; _secrets = (hashId (ShortId.generate ()), hashId (ShortId.generate ()))
+  ; _secretsInterval = 5 * 60
+  ; _tickInterval = 5
+  ; _bottom = []
+  ; _results = Map.empty
+  ; destroyed = false
+  ; events = []
+  ; replacementNodes = []
+  ; waitingReply = Map.empty
+  }
+
+let _bootstrap _addNode (self : DHT) =
+  Array.fold
+    (fun self (node : NodeIdent) ->
+      _addNode 0 node.id { host = node.host ; port = node.port } None self
+    )
+    self
+    self._bootstrap
 
 let _token peer i self =
   let sha256Hasher = Crypto.createHash "sha256" in
@@ -136,32 +177,15 @@ let _token peer i self =
   let _ = Crypto.updateBuffer hostBuffer sha256Hasher in
   Crypto.digestBuffer sha256Hasher
 
-let hashId id =
-  let sha256Hasher = Crypto.createHash "sha256" in
-  let _ = Crypto.updateBuffer (Buffer.fromString id "binary") sha256Hasher in
-  Crypto.digestBuffer sha256Hasher
-
-let defaultOpts =
-  { q = QueryStream.defaultOpts
+let (kBucketOps : KBucket.KBucketAbstract<Buffer,Node>) =
+  { distance = KBucket.defaultDistance
+  ; nodeId = fun n -> n.id
+  ; arbiter = fun i e -> if i.vectorClock > e.vectorClock then i else e
+  ; keyNth = Buffer.at
+  ; keyLength = Buffer.length
+  ; idEqual = Buffer.equal
+  ; idLess = fun a b -> Buffer.compare a b < 0
   }
-
-let query query opts self =
-  let newId = ShortId.generate () in
-  let hashedId = hashId newId in
-  { self with
-      inFlightQueries = self.inFlightQueries + 1 ;
-      _queryData =
-        Map.add
-          (Buffer.toArray hashedId)
-          { qs = QueryStream.init hashedId opts.q query
-          ; actions = []
-          }
-          self._queryData
-  }
-
-let update q opts self =
-  let o1 = { opts with q = { opts.q with token = true } } in
-  query q o1 self
 
 let _request socketInFlight request (peer : NodeIdent) important self =
   let newRequest = (request,peer) in
@@ -182,6 +206,27 @@ let _request socketInFlight request (peer : NodeIdent) important self =
           (Request (request,{ host = peer.host ; port = peer.port })) ::
             self2.events
     }
+
+let query socketInFlight query opts self =
+  let newId = ShortId.generate () in
+  let hashedId = hashId newId in
+  let queryString = Serialize.stringify query in
+  let queryBuffer = Buffer.fromString queryString "utf-8" in
+  let target =
+    Serialize.field "target" query
+    |> optionDefault (Serialize.jsonNull ())
+    |> Serialize.asString
+    |> (fun s -> Buffer.fromString s "binary")
+  in
+  let closest = KBucket.closest kBucketOps self.nodes target 1 None in
+  if Array.length closest > 0 then
+    _request socketInFlight queryBuffer { id = target ; host = closest.[0].host ; port = closest.[0].port } true self
+  else
+    self
+
+let update socketInFlight q opts self =
+  let o1 = { opts with q = { opts.q with token = true } } in
+  query socketInFlight q o1 self
 
 let destroy self =
   if self.destroyed then
@@ -212,7 +257,7 @@ let _check socketInFlight node self =
     self
     (* if (err) self._removeNode(node) <-- ping reply *)
 
-let _pingSome socketInFlight self =
+let _pingSome socketInFlight (self : DHT) : DHT =
   let cnt = if self.inFlightQueries > 2 then 1 else 3 in
   let oldest = ref self._bottom in
   List.fold
@@ -228,6 +273,7 @@ let _pingSome socketInFlight self =
       | [] -> self
     )
     self
+    !oldest
 
 let _rotateSecrets self =
   let secret = Crypto.randomBytes 32 in
@@ -405,16 +451,6 @@ let _reping
  *)
 
 let validateId id = Buffer.length id = 32
-
-let (kBucketOps : KBucket.KBucketAbstract<Buffer,Node>) =
-  { distance = KBucket.defaultDistance
-  ; nodeId = fun n -> n.id
-  ; arbiter = fun i e -> if i.vectorClock > e.vectorClock then i else e
-  ; keyNth = Buffer.at
-  ; keyLength = Buffer.length
-  ; idEqual = Buffer.equal
-  ; idLess = fun a b -> Buffer.compare a b < 0
-  }
 
 let _onquery request peer (self : DHT) : DHT =
   Serialize.field "target" request
@@ -643,7 +679,7 @@ let _addNode socketInFlight (id : Buffer) (peer : HostIdent) (token : Buffer opt
   else
     self
 
-let _onresponse socketInFlight response peer self =
+let _onresponse socketInFlight response peer (self0 : DHT) =
   let rec doPendingInner n self =
     if n < 1 || Array.length self._pendingRequests < 1 then
       self
@@ -653,6 +689,7 @@ let _onresponse socketInFlight response peer self =
         (n-1)
         { self with events = (Request (req, { host = node.host ; port = node.port })) :: self.events }
   in
+  let (self : DHT) = { self0 with _bootstrapped = true } in
   Serialize.field "target" response
   |> optionMap
        (fun (target : Serialize.Json) ->
@@ -689,6 +726,28 @@ let _onresponse socketInFlight response peer self =
            | (None, _) -> self
        )
 
+let tick socketInFlight self =
+  let nextTick = self._tick + 1 in
+  let uself =
+    if self._bootstrapped then
+      { self with _tick = nextTick }
+    else
+      let q =
+        Serialize.jsonObject
+          [| ("command", Serialize.jsonString "_find_node") ;
+             ("target", Serialize.jsonString (Buffer.toString "binary" self.id))
+          |]
+      in
+      query socketInFlight q defaultOpts { self with _tick = nextTick }
+  in
+  if nextTick &&& 7 = 0 then
+    _pingSome socketInFlight uself
+  else
+    uself
+
+let bootstrap =
+  _bootstrap _addNode
+
 (*
 DHT.prototype.holepunch = function (peer, referrer, cb) {
   this._holepunch(parseAddr(peer), parseAddr(referrer), cb)
@@ -709,40 +768,6 @@ DHT.prototype.toArray = function () {
 
 DHT.prototype.address = function () {
   return this.socket.address()
-}
-
-DHT.prototype.bootstrap = function (cb) {
-  var self = this
-
-  if (!this._bootstrap.length) return process.nextTick(done)
-
-  var backgroundCon = Math.min(self.concurrency, Math.max(2, Math.floor(self.concurrency / 8)))
-  var qs = this.query({
-    command: '_find_node',
-    target: this.id
-  })
-
-  qs.on('data', update)
-  qs.on('error', onerror)
-  qs.on('end', done)
-
-  update()
-
-  function onerror (err) {
-    if (cb) cb(err)
-  }
-
-  function done () {
-    if (!self._bootstrapped) {
-      self._bootstrapped = true
-      self.emit('ready')
-    }
-    if (cb) cb()
-  }
-
-  function update () {
-    qs._concurrency = self.inflightQueries === 1 ? self.concurrency : backgroundCon
-  }
 }
 
 DHT.prototype.listen = function (port, cb) {
