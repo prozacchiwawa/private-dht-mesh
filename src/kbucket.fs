@@ -99,7 +99,9 @@ let init localNodeId =
   ; high = None
   }
 
-let indexOfId ops self id =
+
+(* Returns the index of the contact if it exists *)
+let indexOf ops id self =
   match self.bucket with
   | Some bucket ->
      bucket
@@ -111,12 +113,6 @@ let indexOfId ops self id =
      |> listHeadOption
      |> optionDefault -1
   | _ -> -1
-
-(* Returns the index of the contact if it exists
-// **NOTE**: indexOf() does not compare vectorClock
-*)
-let indexOf ops self contact =
-  indexOfId ops self (ops.nodeId contact)
 
 (* We can compare arrays of ints so we'll express the distance that way for lack of anything
  * better for now. *)
@@ -211,7 +207,7 @@ let rec addInternal
           )
   | (Some bucket, _, _) ->
      (* Check if the contact already exists *)
-     let index = indexOf ops self contact in
+     let index = indexOf ops (ops.nodeId contact) self in
      if index >= 0 then
        intr.update ops self contact index
      else
@@ -312,7 +308,7 @@ let rec get (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (id : 'id) 
       else
         get ops high id (Some bitIndexPP)
   | (Some bucket, _, _) ->
-     let index = indexOfId ops self id in (* index of uses contact.id for matching *)
+     let index = indexOf ops id self in (* index of uses contact.id for matching *)
 
      if index < 0 then
        None (* contact not found *)
@@ -324,7 +320,7 @@ let rec get (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (id : 'id) 
 // bitIndex: the bitIndex to which bit to check in the Buffer for navigating
 //           the binary tree
 *)
-let rec remove (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (contact : 'a) (bitIndexOpt : int option) =
+let rec remove (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (contact : 'id) (bitIndexOpt : int option) =
   (* first check whether we are an inner node or a leaf (with bucket contents) *)
   match (self.bucket, self.low, self.high) with
   | (None, Some low, Some high) ->
@@ -335,12 +331,12 @@ let rec remove (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (contact
      let bitIndex = bitIndexOpt |> optionDefault 0 in
      let bitIndexPP = bitIndex + 1 in
 
-     if determineBucket ops self (ops.nodeId contact) (Some bitIndex) < 0 then
+     if determineBucket ops self contact (Some bitIndex) < 0 then
        remove ops low contact (Some bitIndexPP)
      else
        remove ops high contact (Some bitIndexPP)
   | (Some bucket, _, _) ->
-     let index = indexOf ops self contact in
+     let index = indexOf ops contact self in
      if index >= 0 then
        { self with bucket = Some (arrayRemove index 1 bucket) } &> []
      else

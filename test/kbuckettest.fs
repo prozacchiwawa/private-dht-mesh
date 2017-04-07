@@ -380,7 +380,7 @@ let tests =
         let id = nodeId "a" in
         kbadd kb pings (newContactBuffer id) ;
         massert.ok
-          ((KBucket.indexOf kbOps !kb (newContactBuffer id)) = 0) ;
+          ((KBucket.indexOf kbOps id !kb) = 0) ;
         donef ()
 
   ; "indexOf returns -1 if contact is not found" =>
@@ -390,7 +390,7 @@ let tests =
         let id = nodeId "a" in
         kbadd kb pings (newContactBuffer id) ;
         massert.ok
-          ((KBucket.indexOf kbOps !kb (newContactBuffer (nodeId "b"))) = -1) ;
+          ((KBucket.indexOf kbOps (nodeId "b") !kb) = -1) ;
         donef ()
 
   ; "removing a contact should remove contact from nested buckets" =>
@@ -426,7 +426,7 @@ let tests =
            | None -> false
         in
         let _ = massert.ok (highBucketMatch toDelete) in
-        let (kb2,_) = KBucket.remove kbOps !kb toDelete None in
+        let (kb2,_) = KBucket.remove kbOps !kb toDelete.id None in
         let _ = kb := kb2 in
         massert.ok (not (highBucketMatch toDelete)) ;
         donef ()

@@ -16,6 +16,9 @@ type Action =
   | Holepunch of Node * HostIdent
   | ForwardRequest of Serialize.Json * Node * HostIdent
   | MethodCall of MethodCallData
+  | Response of Buffer * HostIdent
+  | AddNode of Node
+  | RemoveNode of Node
 
 and NodeListElement =
   { peer : Node
@@ -95,7 +98,7 @@ type DHT =
   ; _bootstrap : string list
   ; _queryId : int option
   ; _bootstrapped : bool
-  ; _pendingRequests : (Buffer * Node) array
+  ; _pendingRequests : (Buffer * NodeIdent) array
   ; _tick : int
   ; _secrets : (Buffer * Buffer)
   ; _secretsInterval : int
@@ -158,7 +161,7 @@ let update q opts self =
   let o1 = { opts with q = { opts.q with token = true } } in
   query q o1 self
 
-let _request socketInFlight request peer important self =
+let _request socketInFlight request (peer : NodeIdent) important self =
   let newRequest = (request,peer) in
   let self2 =
     { self with
@@ -217,7 +220,7 @@ let _pingSome socketInFlight self =
          if self._tick - hd.tick >= 3 then
            let last = hd in
            let _ = oldest := tl in
-           _check socketInFlight last.peer self
+           _check socketInFlight { id = last.peer.id ; host = last.peer.host ; port = last.peer.port } self
          else
            self
       | [] -> self
@@ -334,18 +337,21 @@ let _holepunch socketInFlight peer referer self =
 let _forwardResponse request (peer : Node) self =
   let forResponse = request |> Serialize.field "forwardResponse" in
   match forResponse with
-  | None -> None
+  | None -> self
   | Some resp ->
      let from = decodePeers (Serialize.asString resp) in
      if Array.length from = 0 then
-       None
+       self
      else
-       Some
-         (request
-          |> Serialize.addField "host" (Serialize.jsonString from.[0].host)
-          |> Serialize.addField "port" (Serialize.jsonInt from.[0].port)
-          |> Serialize.addField "request" (Serialize.jsonBool true)
-         )
+       let reqString =
+         request
+         |> Serialize.addField "host" (Serialize.jsonString from.[0].host)
+         |> Serialize.addField "port" (Serialize.jsonInt from.[0].port)
+         |> Serialize.addField "request" (Serialize.jsonBool true)
+         |> Serialize.stringify
+       in
+       let reqBuffer = Buffer.fromString reqString "utf-8" in
+       { self with events = (Response (reqBuffer, { host = peer.host ; port = peer.port })) :: self.events }
 
 let _forwardRequest request (peer : Node) self =
   let forRequest = request |> Serialize.field "forwardRequest" in
@@ -368,9 +374,13 @@ let _forwardRequest request (peer : Node) self =
             }
           )
 
-let _reping socketInFlight oldContacts newContact self =
+let _reping
+      socketInFlight
+      (oldContacts : Node array)
+      (newContact : Node)
+      (self : DHT) : DHT =
   Array.fold
-    (fun self contact ->
+    (fun (self : DHT) (contact : Node) ->
       let requestString =
         makePingBody self._queryId self |> Serialize.stringify
       in
@@ -378,7 +388,7 @@ let _reping socketInFlight oldContacts newContact self =
       _request
         socketInFlight
         requestBuffer
-        contact
+        { id = contact.id ; host = contact.host ; port = contact.port }
         true
         self
     )
@@ -464,7 +474,219 @@ let _onquery request peer (self : DHT) : DHT =
            | _ -> self
        )
   |> optionDefault self
-       
+
+let _onping request peer self =
+  let token = Buffer.toString "binary" (_token peer false self) in
+  let resString = 
+    Serialize.jsonObject
+      [| ("id", self._queryId |> optionMap Serialize.jsonInt |> optionDefault (Serialize.jsonNull ())) ;
+         ("value", Serialize.jsonString (encodePeers [|peer|])) ;
+         ("roundtripToken", Serialize.jsonString token)
+      |] |> Serialize.stringify
+  in
+  let resBuffer = Buffer.fromString resString "utf-8" in
+  { self with events = (Response (resBuffer, peer)) :: self.events }
+
+let _onfindnode request peer self =
+  let token = Buffer.toString "binary" (_token peer false self) in
+  Serialize.field "target" request
+  |> optionMap
+       (fun (target : Serialize.Json) ->
+         Buffer.fromString (Serialize.asString target) "binary"
+       )
+  |> optionMap
+       (fun (target : Buffer) ->
+         if not (validateId target) then
+           self
+         else
+           let resString =
+             Serialize.jsonObject
+               [| ("id", self._queryId |> optionMap Serialize.jsonInt |> optionDefault (Serialize.jsonNull ())) ;
+                  ("nodes",
+                   Serialize.jsonString
+                     (encodePeers
+                        (KBucket.closest
+                           kBucketOps
+                           self.nodes
+                           target
+                           20
+                           None
+                         |> Array.map (fun n -> { host = n.host ; port = n.port })
+                        )
+                     )
+                  ) ;
+                  ("roundtripToken", Serialize.jsonString token)
+               |] |> Serialize.stringify
+           in
+           let resBuffer = Buffer.fromString resString "utf-8" in
+           { self with events = (Response (resBuffer, peer)) :: self.events }
+       )
+  |> optionDefault self
+
+let _onrequest request peer self =
+  Serialize.field "target" request
+  |> optionMap
+       (fun (target : Serialize.Json) ->
+         Buffer.fromString (Serialize.asString target) "binary"
+       )
+  |> optionMap
+       (fun (target : Buffer) ->
+         if not (validateId target) then
+           self
+         else
+           let rtt =
+             Serialize.field "roundtripToken" request |> optionMap Serialize.asString
+           in
+           let rttBuffer = ref None in
+           let _ =
+             match rtt with
+             | Some rtt ->
+                begin
+                  rttBuffer :=
+                    Some (Buffer.fromString rtt "binary") ;
+                  let (s0,s1) = self._secrets in
+                  match !rttBuffer with
+                  | Some rb ->
+                     if not (Buffer.equal s0 rb) && not (Buffer.equal s1 rb) then
+                       rttBuffer := None ;
+                  | None -> ()
+                end
+             | None -> ()
+           in
+           if Serialize.field "forwardRequest" request <> None then
+             _forwardRequest request peer self
+           else if Serialize.field "forwardResponse" request <> None then
+             _forwardResponse request peer self
+           else
+             match Serialize.field "command" request |> optionMap Serialize.asString with
+             | Some "ping" -> _onping request { host = peer.host ; port = peer.port } self
+             | Some "_find_node" -> _onfindnode request { host = peer.host ; port = peer.port } self
+             | _ -> _onquery request { host = peer.host ; port = peer.port } self
+       )
+
+let add (node : Node) (self : DHT) : DHT =
+  { self with
+      _bottom =
+        { peer = node ; tick = self._tick } :: 
+          (List.filter
+             (fun n -> not (Buffer.equal n.peer.id node.id))
+             self._bottom
+          )
+  }
+
+let remove (node : Node) (self : DHT) : DHT =
+  { self with
+      _bottom =
+        List.filter
+          (fun n -> not (Buffer.equal n.peer.id node.id))
+          self._bottom
+  }
+
+let rec applyKBucketEvents
+          socketInFlight
+          (evts : KBucket.Action<Buffer,Node> list)
+          (self : DHT) : DHT =
+  match evts with
+  | [] ->
+     self
+  | Ping (nodes,contact) :: tl ->
+     _reping
+       socketInFlight
+       nodes
+       contact
+       (applyKBucketEvents socketInFlight tl self)
+  
+let _removeNode socketInFlight (node : Node) (self : DHT) : DHT =
+  let (newNodes, newEvents) =
+    KBucket.remove kBucketOps self.nodes node.id None
+  in
+  applyKBucketEvents
+    socketInFlight
+    newEvents
+    { remove node self with
+      nodes = newNodes ;
+      events = (RemoveNode node) :: self.events
+    }
+
+let _addNode socketInFlight (id : Buffer) (peer : HostIdent) (token : Buffer option) (self : DHT) : DHT =
+  if Buffer.equal id self.id then
+    let node = KBucket.get kBucketOps self.nodes id None in
+    let (fresh,defNode) =
+      match node with
+      | Some node -> (false,node)
+      | None ->
+         (true,
+          { id = id
+          ; queried = false
+          ; distance = Buffer.fromArray (KBucket.defaultDistance kBucketOps id self.id)
+          ; port = peer.port
+          ; host = peer.host
+          ; roundtripToken = token |> optionMap (Buffer.toString "binary") |> optionDefault ""
+          ; vectorClock = self._tick
+          ; referer = id
+          }
+         )
+    in
+    let self2 = if not fresh then remove defNode self else self in
+    let self3 = add defNode self in
+    let (newNodes,newEvents) = KBucket.add kBucketOps self.nodes defNode None in
+    applyKBucketEvents
+      socketInFlight
+      newEvents
+      { self3 with
+          nodes = newNodes ;
+          events =
+            if fresh then (AddNode defNode) :: self3.events else self3.events
+      }
+  else
+    self
+
+let _onresponse socketInFlight response peer self =
+  let rec doPendingInner n self =
+    if n < 1 || Array.length self._pendingRequests < 1 then
+      self
+    else
+      let (req, node) = self._pendingRequests.[0] in
+      doPendingInner
+        (n-1)
+        { self with events = (Request (req, { host = node.host ; port = node.port })) :: self.events }
+  in
+  Serialize.field "target" response
+  |> optionMap
+       (fun (target : Serialize.Json) ->
+         Buffer.fromString (Serialize.asString target) "binary"
+       )
+  |> optionMap
+       (fun (target : Buffer) ->
+         if not (validateId target) then
+           self
+         else
+           let mt =
+             (Serialize.field "id" response,
+              Serialize.field "roundtripToken" response
+             )
+           in
+           match mt with
+           | (Some id, roundtripToken) ->
+              let rtt =
+                roundtripToken
+                |> optionMap
+                     (fun rtt ->
+                       Buffer.fromString (Serialize.asString rtt) "binary"
+                     )
+              in
+              doPendingInner
+                (min socketInFlight self.concurrency)
+                (_addNode
+                   socketInFlight
+                   (Buffer.fromString (Serialize.asString id) "binary")
+                   peer
+                   rtt
+                   self
+                )
+           | (None, _) -> self
+       )
+
 (*
 DHT.prototype.holepunch = function (peer, referrer, cb) {
   this._holepunch(parseAddr(peer), parseAddr(referrer), cb)
@@ -521,63 +743,6 @@ DHT.prototype.bootstrap = function (cb) {
   }
 }
 
-DHT.prototype._onrequest = function (request, peer) {
-  if (validateId(request.id)) this._addNode(request.id, peer, request.roundtripToken)
-
-  if (request.roundtripToken) {
-    if (!bufferEquals(request.roundtripToken, this._token(peer, 0))) {
-      if (!bufferEquals(request.roundtripToken, this._token(peer, 1))) {
-        request.roundtripToken = null
-      }
-    }
-  }
-
-  if (request.forwardRequest) {
-    this._forwardRequest(request, peer)
-    return
-  }
-
-  if (request.forwardResponse) peer = this._forwardResponse(request, peer)
-
-  switch (request.command) {
-    case '_ping': return this._onping(request, peer)
-    case '_find_node': return this._onfindnode(request, peer)
-  }
-
-  this._onquery(request, peer)
-}
-
-DHT.prototype._onresponse = function (response, peer) {
-  if (validateId(response.id)) this._addNode(response.id, peer, response.roundtripToken)
-
-  while (this.socket.inflight < this.concurrency && this._pendingRequests.length) {
-    var next = this._pendingRequests.shift()
-    this.socket.request(next.request, next.peer, next.callback)
-  }
-}
-
-DHT.prototype._onping = function (request, peer) {
-  var res = {
-    id: this._queryId,
-    value: encodePeer(peer),
-    roundtripToken: this._token(peer, 0)
-  }
-
-  this.socket.response(res, peer)
-}
-
-DHT.prototype._onfindnode = function (request, peer) {
-  if (!validateId(request.target)) return
-
-  var res = {
-    id: this._queryId,
-    nodes: nodes.encode(this.nodes.closest(request.target, 20)),
-    roundtripToken: this._token(peer, 0)
-  }
-
-  this.socket.response(res, peer)
-}
-
 DHT.prototype._onnodeping = function (oldContacts, newContact) {
   if (!this._bootstrapped) return // bootstrapping, we've recently pinged all nodes
 
@@ -597,33 +762,6 @@ DHT.prototype._onnodeping = function (oldContacts, newContact) {
   if (reping.length) this._reping(reping, newContact)
 }
 
-DHT.prototype._addNode = function (id, peer, token) {
-  if (bufferEquals(id, this.id)) return
-
-  var node = this.nodes.get(id)
-  var fresh = !node
-
-  if (!node) node = {}
-
-  node.id = id
-  node.port = peer.port
-  node.host = peer.host
-  node.roundtripToken = token
-  node.tick = this._tick
-
-  if (!fresh) remove(this, node)
-  add(this, node)
-
-  this.nodes.add(node)
-  if (fresh) this.emit('add-node', node)
-}
-
-DHT.prototype._removeNode = function (node) {
-  remove(this, node)
-  this.nodes.remove(node.id)
-  this.emit('remove-node', node)
-}
-
 DHT.prototype.listen = function (port, cb) {
   this.socket.listen(port, cb)
 }
@@ -637,35 +775,6 @@ function parseAddr (addr) {
 
 function arbiter (incumbant, candidate) {
   return candidate
-}
-
-function remove (self, node) {
-  if (self._bottom !== node && self._top !== node) {
-    node.prev.next = node.next
-    node.next.prev = node.prev
-    node.next = node.prev = null
-  } else {
-    if (self._bottom === node) {
-      self._bottom = node.next
-      if (self._bottom) self._bottom.prev = null
-    }
-    if (self._top === node) {
-      self._top = node.prev
-      if (self._top) self._top.next = null
-    }
-  }
-}
-
-function add (self, node) {
-  if (!self._top && !self._bottom) {
-    self._top = self._bottom = node
-    node.prev = node.next = null
-  } else {
-    self._top.next = node
-    node.prev = self._top
-    node.next = null
-    self._top = node
-  }
 }
 
 DHT.prototype.ready = function (cb) {
