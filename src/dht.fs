@@ -604,8 +604,8 @@ let _removeNode socketInFlight (node : Node) (self : DHT) : DHT =
     socketInFlight
     newEvents
     { remove node self with
-      nodes = newNodes ;
-      events = (RemoveNode node) :: self.events
+        nodes = newNodes ;
+        events = (RemoveNode node) :: self.events
     }
 
 let _addNode socketInFlight (id : Buffer) (peer : HostIdent) (token : Buffer option) (self : DHT) : DHT =
@@ -741,25 +741,6 @@ DHT.prototype.bootstrap = function (cb) {
   function update () {
     qs._concurrency = self.inflightQueries === 1 ? self.concurrency : backgroundCon
   }
-}
-
-DHT.prototype._onnodeping = function (oldContacts, newContact) {
-  if (!this._bootstrapped) return // bootstrapping, we've recently pinged all nodes
-
-  var reping = []
-
-  for (var i = 0; i < oldContacts.length; i++) {
-    var old = oldContacts[i]
-
-    if (this._tick - old.tick < 3) { // less than 10s since we talked to this peer ...
-      this.nodes.add(oldContacts[i])
-      continue
-    }
-
-    reping.push(old)
-  }
-
-  if (reping.length) this._reping(reping, newContact)
 }
 
 DHT.prototype.listen = function (port, cb) {
