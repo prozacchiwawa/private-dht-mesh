@@ -31,7 +31,6 @@ and MethodCallData =
   ; method_ : string
   ; command : string
   ; query : Serialize.Json
-  ; id : int
   ; nodes : Node array
   ; roundtripToken : Buffer
   }
@@ -96,7 +95,6 @@ type DHT =
   ; concurrency : int
   ; inFlightQueries : int
   ; _bootstrap : NodeIdent array
-  ; _queryId : int option
   ; _bootstrapped : bool
   ; _pendingRequests : (Serialize.Json * NodeIdent) array
   ; _tick : int
@@ -139,7 +137,6 @@ let init opts =
   ; nodes = KBucket.init id
   ; concurrency = 16
   ; inFlightQueries = 0
-  ; _queryId = None
   ; _bootstrap = opts.bootstrap
   ; _bootstrapped = false
   ; _pendingRequests = [| |]
@@ -172,13 +169,11 @@ let _bootstrap _addNode (self : DHT) =
 
 let _token (peer : NodeIdent) i self =
   let sha256Hasher = Crypto.createHash "sha256" in
-  let _ = dump "sha256hasher" sha256Hasher in
   let theSecret =
     match (self._secrets,i) with
     | ((s,_),false) -> s
     | ((_,s),_) -> s
   in
-  let _ = dump "peer" peer in
   let addr = IPAddr.parse peer.host in
   let hostBuffer = Buffer.fromArray (IPAddr.toByteArray addr) in
   let _ = Crypto.updateBuffer theSecret sha256Hasher in
@@ -264,20 +259,16 @@ let destroy self =
   else
     { self with destroyed = true ; events = Destroyed :: self.events }
 
-let makePingBody qid self =
+let makePingBody (self : DHT) =
   Serialize.jsonObject
     [| ("command", Serialize.jsonString "_ping") ;
-       ("id", 
-        qid
-        |> optionMap Serialize.jsonInt
-        |> optionDefault (Serialize.jsonNull ())
-       )
+       ("id", Buffer.toString "binary" self.id |> Serialize.jsonString)
     |]  
 
 let _check socketInFlight node self =
   _request
     socketInFlight
-    (makePingBody self._queryId self)
+    (makePingBody self)
     node
     false
     self
@@ -312,7 +303,7 @@ let _ping
       (self : DHT) : DHT =
   _request
     socketInFlight
-    (makePingBody self._queryId self)
+    (makePingBody self)
     peer
     false
     self
@@ -414,11 +405,7 @@ let _holepunch
   let request =
     Serialize.jsonObject
       [| ("command", Serialize.jsonString "_ping") ;
-         ("id", 
-          self._queryId
-          |> optionMap Serialize.jsonInt
-          |> optionDefault (Serialize.jsonNull ())
-         ) ;
+         ("id", Buffer.toString "binary" self.id |> Serialize.jsonString) ;
          ("forwardRequest",
           encodePeers [|peer|] |> Serialize.jsonString
          )
@@ -500,7 +487,7 @@ let _reping
     (fun (self : DHT) (contact : Node) ->
       _request
         socketInFlight
-        (makePingBody self._queryId self)
+        (makePingBody self)
         { id = contact.id ; host = contact.host ; port = contact.port }
         true
         self
@@ -563,11 +550,9 @@ let _onquery request (peer : NodeIdent) (self : DHT) : DHT =
                   self
               in
               { self with
-                  _queryId = self._queryId |> optionMap (fun q -> q + 1) ;
                   events =
                     (MethodCall
                        { tick = self._tick
-                       ; id = self._queryId |> optionDefault 0
                        ; method_ = _method
                        ; command = Serialize.asString command
                        ; query = request
@@ -590,11 +575,7 @@ let _onping request (peer : NodeIdent) self =
   let token = Buffer.toString "binary" (_token peer false self) in
   let res =
     Serialize.jsonObject
-      [| ("id",
-          self._queryId
-          |> optionMap Serialize.jsonInt
-          |> optionDefault (Serialize.jsonNull ())
-         ) ;
+      [| ("id", Buffer.toString "binary" self.id |> Serialize.jsonString) ;
          ("value", Serialize.jsonString (encodePeers [|peer|])) ;
          ("roundtripToken", Serialize.jsonString token)
       |]
@@ -617,11 +598,7 @@ let _onfindnode
          else
            let res =
              Serialize.jsonObject
-               [| ("id",
-                   self._queryId
-                   |> optionMap Serialize.jsonInt
-                   |> optionDefault (Serialize.jsonNull ())
-                  ) ;
+               [| ("id", Buffer.toString "binary" self.id |> Serialize.jsonString) ;
                   ("nodes",
                    Serialize.jsonString
                      (encodePeers
@@ -645,74 +622,6 @@ let _onfindnode
                |]
            in
            { self with events = (Response (res, peer)) :: self.events }
-       )
-  |> optionDefault self
-
-let _onrequest request (peer : NodeIdent) self =
-  let _ = dump "_onrequest" request in
-  Serialize.field "target" request
-  |> optionMap
-       (fun (target : Serialize.Json) ->
-         Buffer.fromString (Serialize.asString target) "binary"
-       )
-  |> optionMap
-       (fun (target : Buffer) ->
-         if not (validateId target) then
-           self
-         else
-           let rtt =
-             Serialize.field "roundtripToken" request |> optionMap Serialize.asString
-           in
-           let rttBuffer = ref None in
-           let _ =
-             match rtt with
-             | Some rtt ->
-                begin
-                  rttBuffer :=
-                    Some (Buffer.fromString rtt "binary") ;
-                  let (s0,s1) = self._secrets in
-                  match !rttBuffer with
-                  | Some rb ->
-                     if not (Buffer.equal s0 rb) && not (Buffer.equal s1 rb) then
-                       rttBuffer := None ;
-                  | None -> ()
-                end
-             | None -> ()
-           in
-           if Serialize.field "forwardRequest" request <> None then
-             _forwardRequest request peer self
-           else if Serialize.field "forwardResponse" request <> None then
-             _forwardResponse request peer self
-           else
-             let m =
-               Serialize.field "command" request
-               |> optionMap Serialize.asString
-             in
-             match m with
-             | Some "ping" ->
-                _onping
-                  request
-                  { NodeIdent.id = peer.id
-                  ; NodeIdent.host = peer.host
-                  ; NodeIdent.port = peer.port
-                  }
-                  self
-             | Some "_find_node" ->
-                _onfindnode
-                  request
-                  { NodeIdent.id = peer.id
-                  ; NodeIdent.host = peer.host
-                  ; NodeIdent.port = peer.port
-                  }
-                  self
-             | _ ->
-                _onquery
-                  request
-                  { NodeIdent.id = peer.id
-                  ; NodeIdent.host = peer.host
-                  ; NodeIdent.port = peer.port
-                  }
-                  self
        )
   |> optionDefault self
 
@@ -797,11 +706,107 @@ let _addNode
   else
     self
 
+let _onrequest socketInFlight request (peer : NodeIdent) self0 =
+  Serialize.field "target" request
+  |> optionMap
+       (fun (target : Serialize.Json) ->
+         Buffer.fromString (Serialize.asString target) "binary"
+       )
+  |> optionMap
+       (fun (target : Buffer) ->
+         if not (validateId target) then
+           self0
+         else
+           let rtt =
+             Serialize.field "roundtripToken" request |> optionMap Serialize.asString
+           in
+           let rttBuffer = ref None in
+           let _ =
+             match rtt with
+             | Some rtt ->
+                begin
+                  rttBuffer :=
+                    Some (Buffer.fromString rtt "binary") ;
+                  let (s0,s1) = self0._secrets in
+                  match !rttBuffer with
+                  | Some rb ->
+                     if not (Buffer.equal s0 rb) && not (Buffer.equal s1 rb) then
+                       rttBuffer := None ;
+                  | None -> ()
+                end
+             | None -> ()
+           in
+           let self =
+             (_addNode
+                socketInFlight
+                peer
+                !rttBuffer
+                self0
+             )
+           in
+           if Serialize.field "forwardRequest" request <> None then
+             _forwardRequest request peer self
+           else if Serialize.field "forwardResponse" request <> None then
+             _forwardResponse request peer self
+           else
+             let m =
+               Serialize.field "command" request
+               |> optionMap Serialize.asString
+             in
+             match m with
+             | Some "ping" ->
+                _onping
+                  request
+                  { NodeIdent.id = peer.id
+                  ; NodeIdent.host = peer.host
+                  ; NodeIdent.port = peer.port
+                  }
+                  self
+             | Some "_find_node" ->
+                _onfindnode
+                  request
+                  { NodeIdent.id = peer.id
+                  ; NodeIdent.host = peer.host
+                  ; NodeIdent.port = peer.port
+                  }
+                  self
+             | _ ->
+                _onquery
+                  request
+                  { NodeIdent.id = peer.id
+                  ; NodeIdent.host = peer.host
+                  ; NodeIdent.port = peer.port
+                  }
+                  self
+       )
+  |> optionDefault self0
+
 let _onresponse
       socketInFlight
       (response : Serialize.Json)
       (peer : NodeIdent)
       (self0 : DHT) : DHT =
+  let nodeString =
+    Serialize.field "nodes" response
+    |> optionMap Serialize.asString
+    |> optionDefault "\0\0"
+  in
+  let self =
+    Array.fold
+      (fun self peer ->
+        _addNode
+          socketInFlight
+          peer
+          None
+          self
+      )
+      (_addNode
+         socketInFlight
+         peer
+         None
+         self0)
+      (decodePeers nodeString)
+  in
   let rec doPendingInner n self =
     if n < 1 || Array.length self._pendingRequests < 1 then
       self
@@ -821,7 +826,7 @@ let _onresponse
               ) :: self.events
         }
   in
-  let (self : DHT) = { self0 with _bootstrapped = true } in
+  let (self : DHT) = { self with _bootstrapped = true } in
   Serialize.field "target" response
   |> optionMap
        (fun (target : Serialize.Json) ->
@@ -832,29 +837,20 @@ let _onresponse
          if not (validateId target) then
            self
          else
-           let mt =
-             (Serialize.field "id" response,
-              Serialize.field "roundtripToken" response
-             )
+           let rtt =
+             match Serialize.field "roundtripToken" response with
+             | Some rtt ->
+                Some (Buffer.fromString (Serialize.asString rtt) "binary")
+             | None -> None
            in
-           match mt with
-           | (Some id, roundtripToken) ->
-              let rtt =
-                roundtripToken
-                |> optionMap
-                     (fun rtt ->
-                       Buffer.fromString (Serialize.asString rtt) "binary"
-                     )
-              in
-              doPendingInner
-                (min socketInFlight self.concurrency)
-                (_addNode
-                   socketInFlight
-                   peer
-                   rtt
-                   self
-                )
-           | (None, _) -> self
+           doPendingInner
+             (min socketInFlight self.concurrency)
+             (_addNode
+                socketInFlight
+                peer
+                rtt
+                self
+             )
        )
   |> optionDefault self
 
@@ -867,6 +863,7 @@ let tick socketInFlight self =
       let q =
         Serialize.jsonObject
           [| ("command", Serialize.jsonString "_find_node") ;
+             ("id", Serialize.jsonString (Buffer.toString "binary" self.id)) ;
              ("target", Serialize.jsonString (Buffer.toString "binary" self.id))
           |]
       in
