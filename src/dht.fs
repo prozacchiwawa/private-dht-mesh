@@ -11,28 +11,14 @@ open DHTData
 open QueryStream
 
 type Action =
-  | Ready
-  | Request of Serialize.Json * NodeIdent
-  | Destroyed
-  | Holepunch of NodeIdent * NodeIdent
-  | ForwardRequest of Serialize.Json * NodeIdent * NodeIdent
-  | MethodCall of MethodCallData
-  | Response of Serialize.Json * NodeIdent
+  | Datagram of Serialize.Json * NodeIdent
+  | Payload of Serialize.Json * NodeIdent
   | AddNode of Node
   | RemoveNode of Node
 
 and NodeListElement =
   { peer : Node
   ; tick : int
-  }
-
-and MethodCallData =
-  { tick : int
-  ; method_ : string
-  ; command : string
-  ; query : Serialize.Json
-  ; nodes : Node array
-  ; roundtripToken : Buffer
   }
 
 and WaitingReply =
@@ -44,50 +30,6 @@ and WaitingReply =
   ; nodes : Node array
   ; roundtripToken : Buffer
   }
-
-(*
-function DHT (opts) {
-  if (!(this instanceof DHT)) return new DHT(opts)
-  if (!opts) opts = {}
-
-  events.EventEmitter.call(this)
-
-  var self = this
-
-  this.concurrency = opts.concurrency || 16
-  this.id = opts.id || crypto.randomBytes(32)
-  this.ephemeral = !!opts.ephemeral
-  this.nodes = new KBucket({localNodeId: this.id, arbiter: arbiter})
-  this.nodes.on('ping', onnodeping)
-  this.inflightQueries = 0
-
-  this.socket = udp({
-    socket: opts.socket,
-    requestEncoding: messages.Request,
-    responseEncoding: messages.Response
-                     })
-
-  this.socket.on('request', onrequest)
-  this.socket.on('response', onresponse)
-  this.socket.on('close', onclose)
-
-  this._bootstrap = [].concat(opts.bootstrap || []).map(parseAddr)
-  this._queryId = this.ephemeral ? null : this.id
-  this._bootstrapped = false
-  this._pendingRequests = []
-  this._tick = 0
-  this._secrets = [crypto.randomBytes(32), crypto.randomBytes(32)]
-  this._secretsInterval = setInterval(rotateSecrets, 5 * 60 * 1000)
-  this._tickInterval = setInterval(tick, 5 * 1000)
-  this._top = null
-  this._bottom = null
-
-  if (opts.nodes) {
-    for (var i = 0; i < opts.nodes.length; i++) {
-      this._addNode(opts.nodes[i].id, opts.nodes[i])
-          }
-       }
- *)
 
 type DHT =
   { id : Buffer
@@ -106,7 +48,6 @@ type DHT =
   ; destroyed : bool
   ; events : Action list
   ; replacementNodes : Node list
-  ; waitingReply : Map<int,WaitingReply>
   }
 
 and QueryInfo =
@@ -149,7 +90,6 @@ let init opts =
   ; destroyed = false
   ; events = []
   ; replacementNodes = []
-  ; waitingReply = Map.empty
   }
 
 let _bootstrap _addNode (self : DHT) =
@@ -211,11 +151,11 @@ let _request
   else
     { self2 with
         events =
-          (Request
+          (Datagram
              (request,
-              { id = peer.id 
+              { id = peer.id
               ; host = peer.host
-              ; port = peer.port 
+              ; port = peer.port
               }
              )
           ) ::
@@ -253,17 +193,11 @@ let update socketInFlight q opts self =
   let o1 = { opts with q = { opts.q with token = true } } in
   query socketInFlight q o1 self
 
-let destroy self =
-  if self.destroyed then
-    self
-  else
-    { self with destroyed = true ; events = Destroyed :: self.events }
-
 let makePingBody (self : DHT) =
   Serialize.jsonObject
     [| ("command", Serialize.jsonString "_ping") ;
        ("id", Buffer.toString "binary" self.id |> Serialize.jsonString)
-    |]  
+    |]
 
 let _check socketInFlight node self =
   _request
@@ -397,87 +331,6 @@ let decodePeers (str : string) : NodeIdent array =
   with _ ->
     [| |]
 
-let _holepunch
-      socketInFlight
-      (peer : NodeIdent)
-      referer
-      (self : DHT) : DHT =
-  let request =
-    Serialize.jsonObject
-      [| ("command", Serialize.jsonString "_ping") ;
-         ("id", Buffer.toString "binary" self.id |> Serialize.jsonString) ;
-         ("forwardRequest",
-          encodePeers [|peer|] |> Serialize.jsonString
-         )
-      |]
-  _request
-    socketInFlight
-    request
-    referer
-    false
-    self
-
-let _forwardResponse
-      (request : Serialize.Json)
-      (peer : NodeIdent)
-      (self : DHT) : DHT =
-  let forResponse = request |> Serialize.field "forwardResponse" in
-  match forResponse with
-  | None -> self
-  | Some resp ->
-     let from = decodePeers (Serialize.asString resp) in
-     if Array.length from = 0 then
-       self
-     else
-       let req =
-         request
-         |> Serialize.addField "host" (Serialize.jsonString from.[0].host)
-         |> Serialize.addField "port" (Serialize.jsonInt from.[0].port)
-         |> Serialize.addField "request" (Serialize.jsonBool true)
-       in
-       { self with
-           events =
-             (Response
-                (req,
-                 { id = peer.id
-                 ; host = peer.host
-                 ; port = peer.port
-                 }
-                )
-             ) ::
-               self.events
-       }
-
-let _forwardRequest request (peer : NodeIdent) self =
-  let forRequest = request |> Serialize.field "forwardRequest" in
-  match forRequest with
-  | None -> self
-  | Some req ->
-     let _to = decodePeers (Serialize.asString req) in
-     if Array.length _to = 0 then
-       self
-     else
-       let peerEnc =
-         encodePeers
-           [| { id = peer.id ; host = peer.host ; port = peer.port } |]
-       in
-       request
-       |> Serialize.addField "forwardRequest" (Serialize.jsonNull ())
-       |> Serialize.addField "forwardResponse" (Serialize.jsonString peerEnc)
-       |> (fun fr ->
-            let (fto : NodeIdent) =
-              { NodeIdent.id = _to.[0].id
-              ; NodeIdent.host = _to.[0].host
-              ; NodeIdent.port = _to.[0].port
-              }
-            in
-            { self with
-                events =
-                  (ForwardRequest (fr,peer,fto)) ::
-                    (Holepunch (peer,fto)) :: self.events
-            }
-          )
-
 let _reping
       socketInFlight
       (oldContacts : Node array)
@@ -496,7 +349,7 @@ let _reping
     oldContacts
 
 
-(* 
+(*
 -> error from socket
     self._removeNode(next)
     self.nodes.add(newContact)
@@ -510,64 +363,13 @@ let _onquery request (peer : NodeIdent) (self : DHT) : DHT =
        (fun (target : Serialize.Json) ->
          Buffer.fromString (Serialize.asString target) "binary"
        )
+  |> optionThen (fun target -> if validateId target then Some target else None)
   |> optionMap
        (fun (target : Buffer) ->
-         if not (validateId target) then
-           self
-         else
-           let mt =
-             (Serialize.field "id" request,
-              Serialize.field "command" request,
-              Serialize.field "value" request,
-              Serialize.field "roundtripToken" request
-             )
-           in
-           match mt with
-           | (Some id, Some command, Some value, rtt) ->
-              let query =
-                Serialize.jsonObject
-                  [| ("node",
-                      Serialize.jsonObject
-                        [| ("id", id) ;
-                           ("port", Serialize.jsonInt peer.port) ;
-                           ("host", Serialize.jsonString peer.host) ;
-                        |]
-                     ) ;
-                     ("command", command) ;
-                     ("target", Serialize.jsonString (Buffer.toString "binary" target)) ;
-                     ("value", value) ;
-                     ("roundtripToken", rtt |> optionDefault (Serialize.jsonNull ()))
-                  |]
-              in
-              let _method = if rtt = None then "query" else "update" in
-              let token =
-                _token
-                  { id = peer.id
-                  ; host = peer.host
-                  ; port = peer.port
-                  }
-                  false
-                  self
-              in
-              { self with
-                  events =
-                    (MethodCall
-                       { tick = self._tick
-                       ; method_ = _method
-                       ; command = Serialize.asString command
-                       ; query = request
-                       ; nodes =
-                           KBucket.closest
-                             kBucketOps
-                             self.nodes
-                             target
-                             20
-                             None
-                       ; roundtripToken = token
-                       }
-                    ) :: self.events
-              }
-           | _ -> self
+         { self with
+             events =
+               (Payload (request, peer)) :: self.events
+         }
        )
   |> optionDefault self
 
@@ -579,13 +381,12 @@ let _onping request (peer : NodeIdent) self =
          ("value", Serialize.jsonString (encodePeers [|peer|])) ;
          ("roundtripToken", Serialize.jsonString token)
       |]
-  { self with events = (Response (res, peer)) :: self.events }
+  { self with events = (Datagram (res, peer)) :: self.events }
 
 let _onfindnode
       (request : Serialize.Json)
       (peer : NodeIdent)
       (self : DHT) : DHT =
-  let token = Buffer.toString "binary" (_token peer false self) in
   Serialize.field "target" request
   |> optionMap
        (fun (target : Serialize.Json) ->
@@ -598,37 +399,50 @@ let _onfindnode
          else
            let res =
              Serialize.jsonObject
-               [| ("id", Buffer.toString "binary" self.id |> Serialize.jsonString) ;
-                  ("nodes",
-                   Serialize.jsonString
-                     (encodePeers
-                        (KBucket.closest
-                           kBucketOps
-                           self.nodes
-                           target
-                           20
-                           None
-                         |> Array.map
-                              (fun n ->
-                                { id = n.id
-                                ; host = n.host
-                                ; port = n.port
-                                }
-                              )
-                        )
-                     )
-                  ) ;
-                  ("roundtripToken", Serialize.jsonString token)
-               |]
+               (Seq.concat
+                  [ [ ("id",
+                       Buffer.toString "binary" self.id
+                       |> Serialize.jsonString
+                      )
+                    ; ("nodes",
+                       Serialize.jsonString
+                         (encodePeers
+                            (KBucket.closest
+                               kBucketOps
+                               self.nodes
+                               target
+                               20
+                               None
+                             |> Array.map
+                                  (fun n ->
+                                    { id = n.id
+                                    ; host = n.host
+                                    ; port = n.port
+                                    }
+                                  )
+                            )
+                         )
+                      )
+                    ]
+                  ; let qid =
+                      Serialize.field "qid" request
+                      |> optionMap Serialize.asString
+                    in
+                    match qid with
+                    | Some qid -> [("qid", Serialize.jsonString qid)]
+                    | None -> []
+                  ]
+                |> Array.ofSeq
+               )
            in
-           { self with events = (Response (res, peer)) :: self.events }
+           { self with events = (Datagram (res, peer)) :: self.events }
        )
   |> optionDefault self
 
 let add (node : Node) (self : DHT) : DHT =
   { self with
       _bottom =
-        { peer = node ; tick = self._tick } :: 
+        { peer = node ; tick = self._tick } ::
           (List.filter
              (fun n -> not (Buffer.equal n.peer.id node.id))
              self._bottom
@@ -656,7 +470,7 @@ let rec applyKBucketEvents
        nodes
        contact
        (applyKBucketEvents socketInFlight tl self)
-  
+
 let _removeNode socketInFlight (node : Node) (self : DHT) : DHT =
   let (newNodes, newEvents) =
     KBucket.remove kBucketOps self.nodes node.id None
@@ -706,6 +520,31 @@ let _addNode
   else
     self
 
+let _onfindreply
+      socketInFlight
+      (request : Serialize.Json)
+      (peer : NodeIdent)
+      (self0 : DHT) : DHT =
+  let nodeString =
+    Serialize.field "nodes" request
+    |> optionMap Serialize.asString
+    |> optionDefault "\0\0"
+  in
+  Array.fold
+    (fun self peer ->
+      _addNode
+        socketInFlight
+        peer
+        None
+        self
+    )
+    (_addNode
+       socketInFlight
+       peer
+       None
+       self0)
+    (decodePeers nodeString)
+
 let _onrequest socketInFlight request (peer : NodeIdent) self0 =
   Serialize.field "target" request
   |> optionMap
@@ -744,40 +583,44 @@ let _onrequest socketInFlight request (peer : NodeIdent) self0 =
                 self0
              )
            in
-           if Serialize.field "forwardRequest" request <> None then
-             _forwardRequest request peer self
-           else if Serialize.field "forwardResponse" request <> None then
-             _forwardResponse request peer self
-           else
-             let m =
-               Serialize.field "command" request
-               |> optionMap Serialize.asString
-             in
-             match m with
-             | Some "ping" ->
-                _onping
-                  request
-                  { NodeIdent.id = peer.id
-                  ; NodeIdent.host = peer.host
-                  ; NodeIdent.port = peer.port
-                  }
-                  self
-             | Some "_find_node" ->
-                _onfindnode
-                  request
-                  { NodeIdent.id = peer.id
-                  ; NodeIdent.host = peer.host
-                  ; NodeIdent.port = peer.port
-                  }
-                  self
-             | _ ->
-                _onquery
-                  request
-                  { NodeIdent.id = peer.id
-                  ; NodeIdent.host = peer.host
-                  ; NodeIdent.port = peer.port
-                  }
-                  self
+           let m =
+             Serialize.field "command" request
+             |> optionMap Serialize.asString
+           in
+           match m with
+           | Some "ping" ->
+              _onping
+                request
+                { NodeIdent.id = peer.id
+                ; NodeIdent.host = peer.host
+                ; NodeIdent.port = peer.port
+                }
+                self
+           | Some "_find_node" ->
+              _onfindnode
+                request
+                { NodeIdent.id = peer.id
+                ; NodeIdent.host = peer.host
+                ; NodeIdent.port = peer.port
+                }
+                self
+           | Some "_find_repl" ->
+              _onfindreply
+                socketInFlight
+                request
+                { NodeIdent.id = peer.id
+                ; NodeIdent.host = peer.host
+                ; NodeIdent.port = peer.port
+                }
+                self
+           | _ ->
+              _onquery
+                request
+                { NodeIdent.id = peer.id
+                ; NodeIdent.host = peer.host
+                ; NodeIdent.port = peer.port
+                }
+                self
        )
   |> optionDefault self0
 
@@ -816,7 +659,7 @@ let _onresponse
         (n-1)
         { self with
             events =
-              (Request
+              (Datagram
                  (req,
                   { id = node.id
                   ; host = node.host
@@ -854,20 +697,30 @@ let _onresponse
        )
   |> optionDefault self
 
+let _findnode socketInFlight (qid : string option) (id : Buffer) (self : DHT) : DHT =
+  let q =
+    Serialize.jsonObject
+      (Seq.concat
+         [ [ ("command", Serialize.jsonString "_find_node") ;
+             ("target", Serialize.jsonString (Buffer.toString "binary" id))
+           ]
+         ; [("id", Serialize.jsonString (Buffer.toString "binary" self.id))]
+         ; match qid with
+           | Some qid -> [("qid", Serialize.jsonString qid)]
+           | None -> []
+         ]
+       |> Array.ofSeq
+      )
+  in
+  query socketInFlight q defaultOpts self
+
 let tick socketInFlight self =
   let nextTick = self._tick + 1 in
   let uself =
     if self._bootstrapped then
       { self with _tick = nextTick }
     else
-      let q =
-        Serialize.jsonObject
-          [| ("command", Serialize.jsonString "_find_node") ;
-             ("id", Serialize.jsonString (Buffer.toString "binary" self.id)) ;
-             ("target", Serialize.jsonString (Buffer.toString "binary" self.id))
-          |]
-      in
-      query socketInFlight q defaultOpts { self with _tick = nextTick }
+      _findnode socketInFlight None self.id { self with _tick = nextTick }
   in
   if nextTick &&& 7 = 0 then
     _pingSome socketInFlight uself
@@ -878,9 +731,6 @@ let bootstrap =
   _bootstrap _addNode
 
 (*
-DHT.prototype.holepunch = function (peer, referrer, cb) {
-  this._holepunch(parseAddr(peer), parseAddr(referrer), cb)
-}
 
 DHT.prototype.ping = function (peer, cb) {
   this._ping(parseAddr(peer), function (err, res, peer) {

@@ -6,7 +6,7 @@ open Buffer
 
 let (=>) (a : string) (b : 'b) : (string * 'b) = (a,b)
 
-let (tests : (string * ((unit -> unit) -> unit)) list) = 
+let (tests : (string * ((unit -> unit) -> unit)) list) =
   [ "should attempt to bootstrap" =>
       fun donef ->
         let dht1 =
@@ -15,9 +15,9 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
                 bootstrap =
                   [| { host = "4.3.2.1"
                      ; port = 9999
-                     ; id = DHT.hashId "dht" 
-                     } 
-                  |] 
+                     ; id = DHT.hashId "dht"
+                     }
+                  |]
             }
         in
         let dht2 = DHT.bootstrap dht1 in
@@ -47,12 +47,13 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
           in
           let _ = printfn "event %A" l in
           match l with
-          | DHT.Request (b,_) ->
-             let id = getIdFromRequest b in
-             DHT._onrequest 0 b { id = id ; host = host ; port = port } d
-          | DHT.Response (b,_) ->
-             let id = getIdFromRequest b in
-             DHT._onresponse 0 b { id = id ; host = host ; port = port } d
+          | DHT.Datagram (b,_) ->
+                let id = getIdFromRequest b in
+                let isrequest = Serialize.field "r" b = None in
+                if isrequest then
+                    DHT._onrequest 0 b { id = id ; host = host ; port = port } d
+                else
+                    DHT._onresponse 0 b { id = id ; host = host ; port = port } d
           | _ -> d
         in
         let pushFrom ((b,d) : (DHT.DHT * DHT.DHT)) : (DHT.DHT * DHT.DHT) =
@@ -75,7 +76,7 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
                   [| { host = "4.3.2.1"
                      ; port = 9999
                      ; id = bsid
-                     } 
+                     }
                   |]
             }
         in
