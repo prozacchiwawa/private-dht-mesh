@@ -6,7 +6,6 @@ type Node =
   { id : Buffer
   ; port : int
   ; host : string
-  ; roundtripToken : string
   ; referer : Buffer
   ; distance : Buffer
   ; queried : bool

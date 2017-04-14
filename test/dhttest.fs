@@ -48,13 +48,13 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
           let _ = printfn "event %A" l in
           match l with
           | DHT.Datagram (b,_) ->
-                let _ = dump "datagram" b in
-                let id = getIdFromRequest b in
-                let isrequest = Serialize.field "r" b = None in
-                if isrequest then
-                    DHT._onrequest 0 b { id = id ; host = host ; port = port } d
-                else
-                    DHT._onresponse 0 b { id = id ; host = host ; port = port } d
+             let _ = dump "datagram" b in
+             let id = getIdFromRequest b in
+             match Serialize.field "rid" b |> optionMap Serialize.asString with
+             | Some rid ->
+                DHT._onresponse 0 rid b { id = id ; host = host ; port = port } d
+             | None ->
+                DHT._onrequest 0 b { id = id ; host = host ; port = port } d
           | _ -> d
         in
         let pushFrom ((b,d) : (DHT.DHT * DHT.DHT)) : (DHT.DHT * DHT.DHT) =

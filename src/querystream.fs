@@ -254,24 +254,17 @@ let insertClosestSorted dhtOps node max self =
 let _addClosest dhtOps dht (res : QueryIdAndToken) (peer : Node) self =
   if bufferCompare res.id (dhtOps.dhtId dht) <> 0 then
     let prev = getNode dhtOps res.id self._pending in
-    let prev2 =
-      match prev with
-      | Some prev -> { prev with roundtripToken = res.roundtripToken }
-      | None ->
-         let (node : Node) =
-           { id = res.id
-           ; port = peer.port
-           ; host = peer.host
-           ; distance = xor res.id self.query.target
-           ; roundtripToken = res.roundtripToken
-           ; referer = peer.referer
-           ; queried = false
-           ; vectorClock = 0
-           }
-         in
-         node
+    let node =
+      { id = res.id
+      ; port = peer.port
+      ; host = peer.host
+      ; distance = xor res.id self.query.target
+      ; referer = peer.referer
+      ; queried = false
+      ; vectorClock = 0
+      }
     in
-    insertClosestSorted dhtOps prev2 (self._k |> optionDefault infinity) self
+    insertClosestSorted dhtOps node (self._k |> optionDefault infinity) self
   else
     self
 
@@ -298,21 +291,9 @@ let _send (dhtOps : DHTOps<'dht>) (dht : 'dht) (node : Node) (force : bool) (use
     else
       node
   in
-  let query = 
-    if not force then
-      if node.queried then
-        self.query
-      else
-        if useToken && node.roundtripToken <> "" then
-          { self.query with roundtripToken = node.roundtripToken }
-        else
-          self.query
-    else
-      self.query
-  in
   let self2 = { self with _inflight = self._inflight + 1 } in
   dhtOps.dhtRequest
-    query
+    self2.query
     node
     false
     (dhtOps.takeQueryStream self2 dht)
