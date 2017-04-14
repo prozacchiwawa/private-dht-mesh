@@ -404,6 +404,8 @@ let _onfindnode
                        Buffer.toString "binary" self.id
                        |> Serialize.jsonString
                       )
+                    ; ("command", Serialize.jsonString "_find_repl")
+                    ; ("r", Serialize.jsonInt 1)
                     ; ("nodes",
                        Serialize.jsonString
                          (encodePeers
@@ -545,85 +547,6 @@ let _onfindreply
        self0)
     (decodePeers nodeString)
 
-let _onrequest socketInFlight request (peer : NodeIdent) self0 =
-  Serialize.field "target" request
-  |> optionMap
-       (fun (target : Serialize.Json) ->
-         Buffer.fromString (Serialize.asString target) "binary"
-       )
-  |> optionMap
-       (fun (target : Buffer) ->
-         if not (validateId target) then
-           self0
-         else
-           let rtt =
-             Serialize.field "roundtripToken" request |> optionMap Serialize.asString
-           in
-           let rttBuffer = ref None in
-           let _ =
-             match rtt with
-             | Some rtt ->
-                begin
-                  rttBuffer :=
-                    Some (Buffer.fromString rtt "binary") ;
-                  let (s0,s1) = self0._secrets in
-                  match !rttBuffer with
-                  | Some rb ->
-                     if not (Buffer.equal s0 rb) && not (Buffer.equal s1 rb) then
-                       rttBuffer := None ;
-                  | None -> ()
-                end
-             | None -> ()
-           in
-           let self =
-             (_addNode
-                socketInFlight
-                peer
-                !rttBuffer
-                self0
-             )
-           in
-           let m =
-             Serialize.field "command" request
-             |> optionMap Serialize.asString
-           in
-           match m with
-           | Some "ping" ->
-              _onping
-                request
-                { NodeIdent.id = peer.id
-                ; NodeIdent.host = peer.host
-                ; NodeIdent.port = peer.port
-                }
-                self
-           | Some "_find_node" ->
-              _onfindnode
-                request
-                { NodeIdent.id = peer.id
-                ; NodeIdent.host = peer.host
-                ; NodeIdent.port = peer.port
-                }
-                self
-           | Some "_find_repl" ->
-              _onfindreply
-                socketInFlight
-                request
-                { NodeIdent.id = peer.id
-                ; NodeIdent.host = peer.host
-                ; NodeIdent.port = peer.port
-                }
-                self
-           | _ ->
-              _onquery
-                request
-                { NodeIdent.id = peer.id
-                ; NodeIdent.host = peer.host
-                ; NodeIdent.port = peer.port
-                }
-                self
-       )
-  |> optionDefault self0
-
 let _onresponse
       socketInFlight
       (response : Serialize.Json)
@@ -680,10 +603,10 @@ let _onresponse
          if not (validateId target) then
            self
          else
-           let rtt =
-             match Serialize.field "roundtripToken" response with
-             | Some rtt ->
-                Some (Buffer.fromString (Serialize.asString rtt) "binary")
+           let qid =
+             match Serialize.field "qid" response with
+             | Some qid ->
+                Some (Buffer.fromString (Serialize.asString qid) "binary")
              | None -> None
            in
            doPendingInner
@@ -691,11 +614,74 @@ let _onresponse
              (_addNode
                 socketInFlight
                 peer
-                rtt
+                qid
                 self
              )
        )
   |> optionDefault self
+
+let _onrequest socketInFlight request (peer : NodeIdent) self0 =
+  Serialize.field "target" request
+  |> optionMap
+       (fun (target : Serialize.Json) ->
+         Buffer.fromString (Serialize.asString target) "binary"
+       )
+  |> optionMap
+       (fun (target : Buffer) ->
+         if not (validateId target) then
+           self0
+         else
+           let self =
+             (_addNode
+                socketInFlight
+                peer
+                None
+                self0
+             )
+           in
+           let m =
+             Serialize.field "command" request
+             |> optionMap Serialize.asString
+           in
+           if Serialize.field "r" request <> None then
+            _onresponse socketInFlight request peer self
+           else
+               match m with
+               | Some "ping" ->
+                  _onping
+                    request
+                    { NodeIdent.id = peer.id
+                    ; NodeIdent.host = peer.host
+                    ; NodeIdent.port = peer.port
+                    }
+                    self
+               | Some "_find_node" ->
+                  _onfindnode
+                    request
+                    { NodeIdent.id = peer.id
+                    ; NodeIdent.host = peer.host
+                    ; NodeIdent.port = peer.port
+                    }
+                    self
+               | Some "_find_repl" ->
+                  _onfindreply
+                    socketInFlight
+                    request
+                    { NodeIdent.id = peer.id
+                    ; NodeIdent.host = peer.host
+                    ; NodeIdent.port = peer.port
+                    }
+                    self
+               | _ ->
+                  _onquery
+                    request
+                    { NodeIdent.id = peer.id
+                    ; NodeIdent.host = peer.host
+                    ; NodeIdent.port = peer.port
+                    }
+                    self
+       )
+  |> optionDefault self0
 
 let _findnode socketInFlight (qid : string option) (id : Buffer) (self : DHT) : DHT =
   let q =
@@ -710,9 +696,10 @@ let _findnode socketInFlight (qid : string option) (id : Buffer) (self : DHT) : 
            | None -> []
          ]
        |> Array.ofSeq
+       |> dump "ar"
       )
   in
-  query socketInFlight q defaultOpts self
+  query socketInFlight (dump "q" q) defaultOpts self
 
 let tick socketInFlight self =
   let nextTick = self._tick + 1 in

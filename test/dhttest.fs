@@ -48,6 +48,7 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
           let _ = printfn "event %A" l in
           match l with
           | DHT.Datagram (b,_) ->
+                let _ = dump "datagram" b in
                 let id = getIdFromRequest b in
                 let isrequest = Serialize.field "r" b = None in
                 if isrequest then
