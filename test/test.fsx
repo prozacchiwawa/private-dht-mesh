@@ -20,6 +20,7 @@
 #load "./mocha.fs"
 #load "./kbuckettest.fs"
 #load "./querystreamtest.fs"
+#load "./testnet.fs"
 #load "./dhttest.fs"
 
 open Util

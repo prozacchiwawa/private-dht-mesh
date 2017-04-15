@@ -486,16 +486,22 @@ let _addNode
           }
          )
     in
-    let self2 = if not fresh then remove defNode self else self in
-    let self3 = add defNode self in
+    let self = if not fresh then remove defNode self else self in
+    let self =
+      if Array.length self._bootstrap = 0 then
+        { self with _bootstrap = [| peer |] }
+      else
+        self
+    in
+    let self = add defNode self in
     let (newNodes,newEvents) = KBucket.add kBucketOps self.nodes defNode None in
     applyKBucketEvents
       socketInFlight
       newEvents
-      { self3 with
+      { self with
           nodes = newNodes ;
           events =
-            if fresh then (AddNode defNode) :: self3.events else self3.events
+            if fresh then (AddNode defNode) :: self.events else self.events
       }
   else
     self
@@ -539,7 +545,6 @@ let _onresponse
       (response : Serialize.Json)
       (peer : NodeIdent)
       (self : DHT) : DHT =
-  let _ = dump "onresponse" response in
   let nodeString =
     Serialize.field "nodes" response
     |> optionMap Serialize.asString
@@ -645,22 +650,27 @@ let _findnode socketInFlight (qid : string) (id : Buffer) (self : DHT) : DHT =
      ; ("target", Serialize.jsonString (Buffer.toString "binary" id))
      ; ("id", Serialize.jsonString (Buffer.toString "binary" self.id))
      ; ("qid", Serialize.jsonString qid)
-    |]  
+    |]
     |> Serialize.jsonObject
   in
   query socketInFlight (dump "q" q) self
 
 let tick socketInFlight self =
   let nextTick = self._tick + 1 in
+  let tself = { self with _tick = nextTick } in
   let uself =
     if self._bootstrapped then
-      { self with _tick = nextTick }
-    else
+      tself
+    else if Array.length self._bootstrap > 0 &&
+              self._inFlightRequests.Count < self.concurrency
+    then
       _findnode
         socketInFlight
         (ShortId.generate ())
         self.id
-        { self with _tick = nextTick }
+        tself
+    else
+      tself
   in
   if nextTick &&& 7 = 0 then
     _pingSome socketInFlight uself
