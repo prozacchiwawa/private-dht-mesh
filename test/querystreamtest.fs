@@ -1,5 +1,0 @@
-module QueryStreamTest
-
-let tests =
-  [
-  ]

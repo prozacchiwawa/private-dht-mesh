@@ -8,7 +8,6 @@ open Crypto
 open ShortId
 open KBucket
 open DHTData
-open QueryStream
 
 let queryTimeout = 30
        
@@ -52,8 +51,6 @@ type DHT =
   ; _tick : int
   ; _tickInterval : int
   ; _bottom : NodeListElement list
-  ; _results : Map<int array,QueryStream.Action>
-  ; destroyed : bool
   ; events : Action list
   ; replacementNodes : Node list
   }
@@ -85,8 +82,6 @@ let init opts =
   ; _tick = 0
   ; _tickInterval = 5
   ; _bottom = []
-  ; _results = Map.empty
-  ; destroyed = false
   ; events = []
   ; replacementNodes = []
   }

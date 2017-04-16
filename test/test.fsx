@@ -17,11 +17,12 @@
 #load "../src/querystream.fs"
 #load "../src/udpmessages.fs"
 #load "../src/dht.fs"
+#load "../src/dhtrpc.fs"
 #load "./mocha.fs"
 #load "./kbuckettest.fs"
-#load "./querystreamtest.fs"
 #load "./testnet.fs"
 #load "./dhttest.fs"
+#load "./dhtrpctest.fs"
 
 open Util
 open Buffer
@@ -80,6 +81,7 @@ let tests : (string * (It list)) list =
       ]
   ; "k-bucket" => KBucketTest.tests
   ; "dht" => DHTTest.tests
+  ; "dhtrpc" => DHTRpcTest.tests
   ]
 
 let _ =

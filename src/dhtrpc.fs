@@ -1,5 +1,9 @@
 module DHTRPC
 
+open Util
+open Buffer
+open KBucket
+open DHTData
 open DHT
 
 type Query =
@@ -11,19 +15,23 @@ type Query =
   ; closest : NodeIdent array
   }
 
-type DWQAction =
+type InternalAction =
   | Bootstrapped
+  | Datagram of (Serialize.Json * NodeIdent)
+  | Payload of (Serialize.Json * NodeIdent)
+  | Find of (Buffer * (NodeIdent array))
+
+type DWQAction =
   | QueryCreated of string
   | QueryReply of (string * Buffer * Serialize.Json)
   | QueryError of (string * Buffer * string)
-  | Datagram of (Serialize.Json * NodeIdent)
-  | ReceivedQuery
+  | SendDatagram of (Serialize.Json * NodeIdent)
 
 type DHTWithQueryProcessing<'dht> =
   { dht : 'dht
   ; events : DWQAction list
   ; activeQueries : Map<string,Query>
-  ; drilling : Map<String,Query>
+  ; drilling : Map<string,Query>
   ; pendingQueries : Query list
   ; maxParallel : int
   ; bootstrapped : bool
@@ -31,18 +39,30 @@ type DHTWithQueryProcessing<'dht> =
 
 and DHTOps<'dht> =
   { findnode : Buffer -> Buffer option -> 'dht -> 'dht
-  ; query : int -> Serialize.Json -> 'dht -> 'dht
-  ; closest : int -> 'dht -> NodeIdent array
+  ; query : int -> Buffer -> Serialize.Json -> 'dht -> 'dht
+  ; closest : int -> Buffer -> 'dht -> NodeIdent array
+  ; harvest : 'dht -> (InternalAction list * 'dht)
+  ; tick : 'dht -> 'dht
   }
 
-let startQuery query dwq =
+let init dht =
+  { dht = dht
+  ; events = []
+  ; activeQueries = Map.empty
+  ; drilling = Map.empty
+  ; pendingQueries = []
+  ; maxParallel = 16
+  ; bootstrapped = false
+  }
+    
+let startQuery dhtOps (query : Query) dwq =
   let toask =
-    if Array.length query.closest then
+    if Array.length query.closest > 0 then
       Some query.closest.[0]
     else
       None
   in
-  if toask = query.tid then
+  if toask |> optionMap (fun t -> t.id = query.tid) |> optionDefault false then
     { dwq with
         activeQueries =
           Map.add
@@ -53,6 +73,7 @@ let startQuery query dwq =
         dht =
           dhtOps.query
             (dwq.drilling.Count + dwq.activeQueries.Count)
+            query.tid
             query.passOn
             dwq.dht
     }
@@ -60,12 +81,16 @@ let startQuery query dwq =
     { dwq with
         activeQueries =
           Map.add
-            id
-            queryObject
+            query.id
+            query
             dwq.activeQueries ;
-        dht = dhtOps.findnode tid toask dwq.dht
+        dht =
+          dhtOps.findnode
+            query.tid
+            (toask |> optionMap (fun toask -> toask.id))
+            dwq.dht
     }
-
+                 
 (* Make a direct request.
  * Deliver the indicated query directly to the desired node, doing multiple
  * _find_nodes hops if needed.
@@ -77,13 +102,14 @@ let directQuery dhtOps tid query dwq =
   let qWithId =
     Serialize.addField "txid" (Serialize.jsonString id) query
   in
-  let currentClosest = dhtOps.closest 8 dwq.dht in
+  let currentClosest = dhtOps.closest 8 tid dwq.dht in
   let queryObject =
     { id = id
     ; tid = tid
     ; passOn = qWithId
     ; accumulated = Map.empty
     ; closest = currentClosest
+    ; pieces = 0
     }
   in
   if dwq.activeQueries.Count + 1 >= dwq.maxParallel || not dwq.bootstrapped then
@@ -92,7 +118,7 @@ let directQuery dhtOps tid query dwq =
         events = (QueryCreated id) :: dwq.events
     } 
   else
-    startQuery queryObject dwq
+    startQuery dhtOps queryObject dwq
 
 let _onresponse (id : Buffer) (resp : Serialize.Json) query dwq =
   { dwq with
@@ -101,14 +127,16 @@ let _onresponse (id : Buffer) (resp : Serialize.Json) query dwq =
   }
 
 let takeDatagram dhtOps resp dwq =
-  Serialize.field "txid" resp
+  Serialize.field "txid" resp |> optionMap Serialize.asString
   |> optionThen (fun id -> Map.tryFind id dwq.activeQueries)
-  |> optionThen
+  |> optionMap
        (fun query ->
          let mt =
            (Serialize.field "_p" resp |> optionThen Serialize.floor
            ,Serialize.field "_n" resp |> optionThen Serialize.floor
-           ,Serialize.field "_b" resp |> optionThen Serialize.floor
+           ,Serialize.field "_b" resp
+            |> optionMap Serialize.asString
+            |> optionMap (fun b -> Buffer.fromString b "binary")
            ,Serialize.field "id" resp
             |> optionMap Serialize.asString
             |> optionMap (fun s -> Buffer.fromString s "binary")
@@ -144,15 +172,15 @@ let takeDatagram dhtOps resp dwq =
                 bufs |> Seq.map Buffer.length |> Seq.sum |> Buffer.zero
               in
               copyAllInto 0 targetBuf bufs
-              |> optionThen
-                   (fun b ->
-                     Serialize.parse (Buffer.toString targetBuf "utf-8")
-                   )
+              |> Buffer.toString "utf-8"
+              |> Serialize.parse
               |> optionMap (fun resp -> _onresponse id resp query dwq)
               |> optionDefault
                    { dwq with
                        activeQueries = Map.remove query.id dwq.activeQueries ;
-                       events = (QueryError (query.id, id, "Decode error"))
+                       events =
+                         (QueryError (query.id, id, "Decode error")) ::
+                           dwq.events
                    }
             else
               { dwq with activeQueries = Map.add query.id newq dwq.activeQueries }
@@ -160,14 +188,27 @@ let takeDatagram dhtOps resp dwq =
        )
   |> optionDefault dwq
 
-let takeFind dhtOps peers q dwq =
-  let qClosest = Set.ofSeq q.closest in
-  let incoming = Set.ofseq peers in
-  let total = Set.union qclosest incoming in
+let (kBucketOps : KBucketAbstract<Buffer,Node>) =
+  { distance = KBucket.defaultDistance
+  ; nodeId = fun n -> n.id
+  ; arbiter = fun a b -> a
+  ; keyLength = Buffer.length
+  ; keyNth = Buffer.at
+  ; idEqual = Buffer.equal
+  ; idLess = fun a b -> Buffer.compare a b < 0
+  } 
+                   
+let takeFind dhtOps peers (q : Query) dwq =
+  let toComparable (n : NodeIdent) =
+    (Buffer.toString "binary" n.id, n.host, n.port)
+  in
+  let qClosest = Set.ofSeq (Array.map toComparable q.closest) in
+  let incoming = Set.ofSeq (Array.map toComparable peers) in
+  let total = Set.union qClosest incoming in
   if total.Count = qClosest.Count then
     (* We didn't advance, we're as close as we come *)
     if Array.length q.closest > 0 then
-      startQuery q dwq
+      startQuery dhtOps q dwq
     else
       { dwq with
           drilling = Map.remove q.id dwq.drilling ;
@@ -176,50 +217,77 @@ let takeFind dhtOps peers q dwq =
       }
   else
     (* Still advancing *)
-    dwq
-      
-let tick dhtOps dwq =
-  let passThroughDhtEvents events =
-    match events with
-    | [] -> []
-    | (DHT.Datagram (json,tgt)) :: tl ->
-       (Datagram (json,tgt)) :: (passThroughDhtEvents tl)
-    | DHT.Ready :: tl ->
-       Bootstrapped :: (passThroughDhtEvents tl)
-    | _ :: tl ->
-       passThroughDhtEvents tl
-  in
-  let tdht = dhtUpdateFun dwq.dht in
-  let events = tdht.events in
-  let myEvents =
-      newDwq.events
-      |> Seq.map
-           (fun a ->
-             match a with
-             | DHT.Payload (json,source) -> [Datagram (json,source)]
-             | DHT.FindNode (target,peers) -> [FindNode (target,peers)]
-             | _ -> []
+    let closestWithDistances =
+      Set.toSeq total
+      |> Array.ofSeq
+      |> Array.map
+           (fun (id,host,port) ->
+             let bid = Buffer.fromString id "binary" in
+             ({ NodeIdent.id = bid
+              ; NodeIdent.host = host
+              ; NodeIdent.port = port
+              }
+             ,KBucket.defaultDistance kBucketOps bid q.tid
+             )
            )
-      |> Seq.concat
-  in
-  let dht = { tdht with events = [] } in
-  let newDwq = { dwq with dht = dht; events = (passThroughDhtEvents events) @ dwq.events } in
+      |> Array.sortWith
+           (fun (a,ad) (b,bd) ->
+             if ad < bd then
+               -1
+             else if ad > bd then
+               1
+             else
+               0
+           )
+      |> Array.map (fun (a,_) -> a)
+    in
+    { dwq with
+        drilling =
+          Map.add
+            q.id
+            { q with closest = Array.sub closestWithDistances 0 8 }
+            dwq.drilling
+    }
+
+let rec dhtPassThrough (dht : DHT.DHT) : (InternalAction list * DHT.DHT) =
+  (dht.events
+   |> Seq.map
+        (fun evt ->
+          match evt with
+          | DHT.Datagram (json,tgt) -> [Datagram (json,tgt)]
+          | DHT.Ready -> [Bootstrapped]
+          | DHT.Payload (json,tgt) -> [Payload (json,tgt)]
+          | DHT.FindNode (target,peers) -> [Find (target,peers)]
+          | _ -> []
+        )
+   |> Seq.concat
+   |> List.ofSeq
+  ,{ dht with events = [] }
+  )
+    
+let tick
+      (dhtOps : DHTOps<'dht>)
+      (dwq : DHTWithQueryProcessing<'dht>) : DHTWithQueryProcessing<'dht> =
+  let (dht : 'dht) = dhtOps.tick dwq.dht in
+  let (events : InternalAction list, dht) = dhtOps.harvest dht in
+  let (dwq : DHTWithQueryProcessing<'dht>) = { dwq with dht = dht } in
   List.fold
-    (fun dwq evt ->
+    (fun (dwq : DHTWithQueryProcessing<'dht>) (evt : InternalAction) ->
       match evt with
       | Find (target,peers) ->
-         (match Map.tryFind (Buffer.toString target "binary") dwq.drilling with
+         (match Map.tryFind (Buffer.toString "binary" target) dwq.drilling with
           | Some q -> takeFind dhtOps peers q dwq
           | None -> dwq
          )
-      | Datagram (json,source) ->
+      | Payload (json,source) ->
          takeDatagram dhtOps json dwq
-      | Ready ->
+      | Datagram (json,source) ->
+         { dwq with events = (SendDatagram (json,source)) :: dwq.events }
+      | Bootstrapped ->
          match dwq.pendingQueries with
          | hd :: tl ->
-            startQuery hd { dwq with pendingQueries = tl }
+            startQuery dhtOps hd { dwq with pendingQueries = tl }
          | _ -> dwq
-      | _ -> dwq
     )
-    newDwq
-    myEvents
+    dwq
+    events
