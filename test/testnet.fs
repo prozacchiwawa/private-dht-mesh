@@ -16,6 +16,7 @@ type TestNet<'a,'o> =
   ; delays : Map<((string * int) * (string * int)), int>
   ; nodes : Map<string, 'o>
   ; events : 'a list
+  ; datagrams : Datagram list
   }
 
 let init nodes endpoints delays =
@@ -25,6 +26,7 @@ let init nodes endpoints delays =
   ; delays = delays
   ; inFlightDatagrams = Map.empty
   ; events = []
+  ; datagrams = []
   }
 
 let addDatagram dg self =
@@ -41,44 +43,47 @@ let addDatagram dg self =
         inFlightDatagrams =
           Map.add targetTick (dg :: dglist) self.inFlightDatagrams
     }
-    
-let propEvents isDatagram passOn self =
-  let (datagrams,oldEvents) = List.partition (fun e -> isDatagram e) self.events in
-  List.fold
-    (fun self dg -> addDatagram (passOn dg) self)
-    { self with events = oldEvents }
-    datagrams
 
-let map harvest isDatagram passOn f nid self =
+let propDatagrams self =
+  List.fold
+    (fun self dg -> addDatagram dg self)
+    { self with datagrams = [] }
+    (List.rev self.datagrams)
+
+let map harvest f nid self =
   self.nodes
   |> Map.tryFind nid
   |> optionMap
        (fun n ->
          let updated = f n in
-         let (events,node) = harvest updated in
+         let (events,datagrams,node) = harvest updated in
          { self with
              nodes =
                Map.add nid updated self.nodes ;
-             events = events @ self.events
+             events = events @ self.events ;
+             datagrams = datagrams @ self.datagrams
          }
-         |> propEvents isDatagram passOn
+         |> propDatagrams
        )
   |> optionDefault self
                    
-let mapall harvest isDatagram passOn f self =
+let mapall harvest f self =
   let newNodes =
     Map.toSeq self.nodes
     |> Seq.map (fun (k,v) -> harvest (f v))
     |> Seq.toList
   in
-  let newEvents = newNodes |> List.map (fun (k,(e,v)) -> e) in
-  let newNodes = newNodes |> List.map (fun (k,(e,v)) -> (k,v)) in
-  propEvents
-    isDatagram
-    passOn
-    { self with nodes = Map.ofSeq newNodes ; events = newEvents @ self.events }
+  let newNodes = newNodes |> List.map (fun (k,(e,d,v)) -> (k,v)) in
+  let newEvents = newNodes |> List.map (fun (k,(e,d,v)) -> e) in
+  let newDatagrams = newNodes |> List.map (fun (k,(e,d,v)) -> d) in
+  propDatagrams
+    { self with
+        nodes = Map.ofSeq newNodes ;
+        events = newEvents @ self.events ;
+        datagrams = newDatagrams @ self.datagrams
+    }
     
-let tick sendFn harvest isDatagram passOn self =
+let tick sendFn harvest self =
   let thisTick = self.clock + 1 in
   let toSend =
     self.inFlightDatagrams |> Map.tryFind thisTick |> optionDefault []
@@ -95,10 +100,11 @@ let tick sendFn harvest isDatagram passOn self =
         |> optionMap
              (fun (nid,node) ->
                let unode = sendFn datagram.source datagram.body node in
-               let (events,node) = harvest nid unode in
+               let (events,datagrams,node) = harvest nid unode in
                { self with
                    nodes = Map.add nid node self.nodes ;
-                   events = events @ self.events
+                   events = events @ self.events ;
+                   datagrams = datagrams @ self.datagrams
                }
              )
            |> optionDefault self
@@ -109,7 +115,9 @@ let tick sendFn harvest isDatagram passOn self =
       }
       toSend
   in
-  propEvents
-    isDatagram
-    passOn
+  propDatagrams
     self
+
+let harvest self =
+  (List.rev self.events, { self with events = [] })
+     

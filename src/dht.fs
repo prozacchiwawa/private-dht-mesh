@@ -13,8 +13,10 @@ open QueryStream
 let queryTimeout = 30
        
 type Action =
+  | Ready
   | Datagram of Serialize.Json * NodeIdent
   | Payload of Serialize.Json * NodeIdent
+  | FindNode of Buffer * (NodeIdent array)
   | AddNode of Node
   | RemoveNode of Node
 
@@ -146,30 +148,42 @@ let _request
 
 let query
       socketInFlight
+      (target : NodeIdent option)
       (query : Serialize.Json)
       (self : DHT) : DHT =
   let qid = ShortId.generate () in
-  let target =
-    Serialize.field "target" query
-    |> optionDefault (Serialize.jsonNull ())
-    |> Serialize.asString
-    |> (fun s -> Buffer.fromString s "binary")
-  in
-  let closest = KBucket.closest kBucketOps self.nodes target 1 None in
-  if Array.length closest > 0 then
-    _request
-      socketInFlight
-      qid
-      query
-      { id = target
-      ; host = closest.[0].host
-      ; port = closest.[0].port
-      }
-      true
-      self
-  else
-    self
-
+  target
+  |> optionMap Some
+  |> optionDefault
+       (Serialize.field "target" query
+        |> optionDefault (Serialize.jsonNull ())
+        |> Serialize.asString
+        |> (fun s -> Buffer.fromString s "binary")
+        |> (fun b -> KBucket.closest kBucketOps self.nodes b 1 None)
+        |> (fun a ->
+             if Array.length a > 0 then
+               let n = a.[0] in
+               Some
+                 { NodeIdent.id = n.id
+                 ; NodeIdent.host = n.host
+                 ; NodeIdent.port = n.port
+                 }
+             else
+               None
+           )
+       )
+  |> optionMap
+       (fun closest ->
+         _request
+           socketInFlight
+           qid
+           query
+           closest
+           true
+           self
+       )
+  |> optionDefault self
+                   
 let makePingBody qid (self : DHT) =
   Serialize.jsonObject
     [| ("command", Serialize.jsonString "_ping") ;
@@ -520,12 +534,19 @@ let _onfindreply
       socketInFlight
       (request : Serialize.Json)
       (peer : NodeIdent)
-      (self0 : DHT) : DHT =
+      (self : DHT) : DHT =
   let nodeString =
     Serialize.field "nodes" request
     |> optionMap Serialize.asString
     |> optionDefault "\0\0"
   in
+  let target =
+    Serialize.field "target" request
+    |> optionMap Serialize.asString
+    |> optionMap (fun s -> Buffer.fromString s "binary")
+    |> optionDefault (Buffer.empty ())
+  in
+  let peers = decodePeers nodeString in
   Array.fold
     (fun self peer ->
       _addNode
@@ -536,9 +557,10 @@ let _onfindreply
     (_addNode
        socketInFlight
        peer
-       self0)
-    (decodePeers nodeString)
-
+       { self with events = (FindNode (target, peers)) :: self.events }
+    )
+    peers
+    
 let _onresponse
       socketInFlight
       (rid : string)
@@ -579,7 +601,14 @@ let _onresponse
          ; NodeIdent.host = peer.host
          ; NodeIdent.port = peer.port
          }
-         { filtered with _bootstrapped = true }
+         { filtered with
+             _bootstrapped = true ;
+             events =
+               if filtered._bootstrapped then
+                 filtered.events
+               else
+                 Ready :: filtered.events
+         }
     | _ ->
        filtered
   in
@@ -600,12 +629,12 @@ let _onresponse
     updated
     requestsToTake
 
-let _onrequest socketInFlight request (peer : NodeIdent) self0 =
+let _onrequest socketInFlight request (peer : NodeIdent) self =
   let self =
     (_addNode
        socketInFlight
        peer
-       self0
+       self
     )
   in
   let mt =
@@ -644,7 +673,7 @@ let _onrequest socketInFlight request (peer : NodeIdent) self0 =
        }
        self
 
-let _findnode socketInFlight (qid : string) (id : Buffer) (self : DHT) : DHT =
+let _findnode socketInFlight (qid : string) (id : Buffer) (target : NodeIdent option) (self : DHT) : DHT =
   let q =
     [| ("command", Serialize.jsonString "_find_node")
      ; ("target", Serialize.jsonString (Buffer.toString "binary" id))
@@ -653,7 +682,7 @@ let _findnode socketInFlight (qid : string) (id : Buffer) (self : DHT) : DHT =
     |]
     |> Serialize.jsonObject
   in
-  query socketInFlight (dump "q" q) self
+  query socketInFlight target (dump "q" q) self
 
 let tick socketInFlight self =
   let nextTick = self._tick + 1 in
@@ -668,6 +697,7 @@ let tick socketInFlight self =
         socketInFlight
         (ShortId.generate ())
         self.id
+        None
         tself
     else
       tself
@@ -676,7 +706,7 @@ let tick socketInFlight self =
     _pingSome socketInFlight uself
   else
     uself
-
+      
 let bootstrap =
   _bootstrap _addNode
 
