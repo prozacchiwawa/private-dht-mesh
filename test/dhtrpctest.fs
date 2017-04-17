@@ -127,7 +127,6 @@ let harvest system =
               )
          |> Seq.concat
          |> List.ofSeq
-         |> (fun a -> printfn "events %A" a ; a)
         ,{ system with
              dhts =
                Map.add
@@ -146,7 +145,6 @@ let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
           |> optionMap (Buffer.toString "binary")
           |> optionDefault system.iam
         in
-        let _ = printfn "Find: ask %A" which in
         Map.tryFind which system.dhts
         |> optionMap
              (fun dht ->
@@ -256,7 +254,6 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
         let a = Buffer.fromArray [|0x55;0xaa|] in
         let b = Buffer.fromArray [|0x56;0xff|] in
         let dist = KBucket.defaultDistance fakeKBucketOps a b in
-        let _ = printfn "distance %A" dist in
         let _ = massert.ok (dist = [|3;0x55|]) in
         donef ()
   ; "determineBucket" =>
@@ -274,14 +271,12 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
             (Seq.init (Array.length which) id)
           |> Array.ofSeq
         in
-        let _ = printfn "determined %A" determined in
         let _ = massert.ok (determined = which) in
         donef ()
   ; "query sends a query to a target node" =>
       fun donef ->
         let q = ref false in
         let gotQuery target query dht =
-          let _ = printfn "query came in: %A" query in
           let _ = q := true in
           Serialize.jsonObject [| |]
         in

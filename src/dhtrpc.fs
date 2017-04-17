@@ -85,7 +85,6 @@ let startQuery dhtOps (query : Query) dwq =
             dwq.dht
     }
   else
-    let _ = printfn "drill down toward our guy %A" removeId in
     { dwq with
         drilling =
           Map.add
@@ -227,13 +226,6 @@ let takeFind dhtOps id peers (q : Query) dwq =
   let qClosest = Set.ofSeq (Array.map toComparable q.closest) in
   let incoming = Set.ofSeq (Array.map toComparable peers) in
   let total = Set.union qClosest incoming in
-  let _ =
-    printfn
-      "Prev closest %d got %d union %d"
-      qClosest.Count
-      incoming.Count
-      total.Count
-  in
   if total.Count = qClosest.Count then
     (* We didn't advance, we're as close as we come *)
     if Array.length q.closest > 0 && Buffer.equal q.closest.[0].id q.tid then
@@ -260,7 +252,6 @@ let takeFind dhtOps id peers (q : Query) dwq =
            )
       |> sortClosest q.tid
     in
-    let _ = printfn "Closest by distance %A -> %A" (Buffer.toString "binary" q.tid) (Array.map (fun (n : NodeIdent) -> (n.host,KBucket.defaultDistance kBucketOps q.tid n.id)) closestWithDistances) in
     startQuery
       dhtOps
       { q with closest = Array.sub closestWithDistances 0 8 }
@@ -297,7 +288,6 @@ let tick
          let drillingFor =
            Map.tryFind (Buffer.toString "binary" target) dwq.drilling
          in
-         let _ = printfn "Find found drilling %A" drillingFor in
          (match drillingFor with
           | Some q -> takeFind dhtOps target peers q dwq
           | None -> dwq
@@ -307,7 +297,6 @@ let tick
       | Datagram (json,source) ->
          { dwq with events = (SendDatagram (json,source)) :: dwq.events }
       | Bootstrapped ->
-         let _ = printfn "Bootstrapped: releasing %A" dwq.pendingQueries in
          match dwq.pendingQueries with
          | hd :: tl ->
             startQuery dhtOps hd { dwq with pendingQueries = tl }
