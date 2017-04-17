@@ -63,11 +63,6 @@ let startQuery dhtOps (query : Query) dwq =
     else
       None
   in
-  let _ =
-    printfn
-      "startQuery: ask %A"
-      (toask |> optionMap (fun n -> Buffer.toString "binary" n.id))
-  in
   let removeId = Buffer.toString "binary" query.tid in
   if toask |> optionMap (fun t -> Buffer.equal t.id query.tid) |> optionDefault false then
     { dwq with
@@ -135,6 +130,7 @@ let _onresponse (id : Buffer) (resp : Serialize.Json) query dwq =
 
 let takeDatagram dhtOps resp dwq =
   Serialize.field "txid" resp |> optionMap Serialize.asString
+  |> optionMap (fun txid -> dump "take" txid)
   |> optionThen (fun id -> Map.tryFind id dwq.activeQueries)
   |> optionMap
        (fun query ->
@@ -144,7 +140,7 @@ let takeDatagram dhtOps resp dwq =
            ,Serialize.field "_b" resp
             |> optionMap Serialize.asString
             |> optionMap (fun b -> Buffer.fromString b "binary")
-           ,Serialize.field "id" resp
+           ,Serialize.field "target" resp
             |> optionMap Serialize.asString
             |> optionMap (fun s -> Buffer.fromString s "binary")
            )
@@ -304,3 +300,6 @@ let tick
     )
     dwq
     events
+
+let harvest dwq =
+  (dwq.events, { dwq with events = [] })

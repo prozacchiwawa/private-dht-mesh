@@ -45,10 +45,8 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
             in
             Buffer.fromString ids "binary"
           in
-          let _ = printfn "event %A" l in
           match l with
           | DHT.Datagram (b,_) ->
-             let _ = dump "datagram" b in
              let id = getIdFromRequest b in
              match Serialize.field "rid" b |> optionMap Serialize.asString with
              | Some rid ->
@@ -118,9 +116,7 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
             (Array.init 50 id)
         in
         let nc = KBucket.toArray dhtc.nodes in
-        let _ = dump "c-nodes" nc in
         let n2 = KBucket.toArray bst3.nodes in
-        let _ = dump "2-nodes" n2 in
         massert.ok (Array.length nc > 1) ;
         donef ()
   ]

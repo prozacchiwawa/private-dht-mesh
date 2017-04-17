@@ -122,7 +122,7 @@ let harvest system =
                 match evt with
                 | FindNode (id,nodes) -> [DHTRPC.Find (id,nodes)]
                 | Datagram (json,tgt) -> [DHTRPC.Datagram (json,tgt)]
-                | Payload (json,tgt) -> [DHTRPC.Payload (json,tgt)]
+                | Payload (json,tgt) -> [DHTRPC.Payload ((dump "r" json),tgt)]
                 | Ready -> [DHTRPC.Bootstrapped]
               )
          |> Seq.concat
@@ -183,6 +183,8 @@ let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
         |> optionDefault system
   ; query =
       fun inFlight target query system ->
+        let qid = ShortId.generate () in
+        let query = Serialize.addField "qid" (Serialize.jsonString qid) query in
         let exists =
           Map.tryFind (Buffer.toString "binary" target) system.dhts <> None
         in
@@ -297,5 +299,57 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
             (Seq.init 16 id)
         in
         let _ = massert.ok !q in
+        donef ()
+  ; "We can make a query and receive a brief reply" =>
+      fun donef ->
+        let gotQuery target query dht =
+          query
+          |> Serialize.addField
+               "target"
+               (Serialize.jsonString (Buffer.toString "binary" target))
+          |> Serialize.addField
+               "rid"
+               (Serialize.field "qid" query
+                |> optionDefault (Serialize.jsonNull ())
+               )
+          |> Serialize.addField
+               "response"
+               (Serialize.jsonBool true)
+          |> dump "response"
+        in
+        let ops = dhtOps gotQuery in
+        let (rpc : DHTRPC.DHTWithQueryProcessing<FakeSystem>) =
+          DHTRPC.init allDhts
+        in
+        let targetIdStr = string 1 in
+        let target = DHT.hashId targetIdStr in
+        let query = Serialize.jsonObject [| |] in
+        let (initdq : DHTRPC.DHTWithQueryProcessing<FakeSystem>) =
+          DHTRPC.directQuery ops target query rpc
+        in
+        let (events,rdq) =
+          Seq.fold
+            (fun (events,rpc) _ ->
+              let rpc = DHTRPC.tick ops rpc in
+              let (nevents,rpc) = DHTRPC.harvest rpc in
+              (nevents @ events, rpc) 
+            )
+            ([], initdq)
+            (Seq.init 16 id)
+        in
+        let response =
+          List.fold
+            (fun response evt ->
+              match evt with
+              | DHTRPC.QueryReply (id,target,resp) ->
+                 Serialize.field "response" resp
+                 |> optionMap Serialize.truthy
+                 |> optionDefault response
+              | _ -> response
+            )
+            false
+            events
+        in
+        let _ = massert.ok response in
         donef ()
   ]

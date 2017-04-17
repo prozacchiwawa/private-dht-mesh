@@ -172,7 +172,7 @@ let query
          _request
            socketInFlight
            qid
-           query
+           (Serialize.addField "qid" (Serialize.jsonString qid) query)
            closest
            true
            self
