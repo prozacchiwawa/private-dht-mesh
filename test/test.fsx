@@ -24,6 +24,7 @@
 #load "./testnet.fs"
 #load "./dhttest.fs"
 #load "./simplefakedht.fs"
+#load "./testnetdht.fs"
 #load "./dhtrpctest.fs"
 
 open Util
