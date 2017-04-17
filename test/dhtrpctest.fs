@@ -184,7 +184,11 @@ let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
   ; query =
       fun inFlight target query system ->
         let qid = ShortId.generate () in
-        let query = Serialize.addField "qid" (Serialize.jsonString qid) query in
+        let query =
+          query
+          |> Serialize.addField "qid" (Serialize.jsonString qid)
+          |> Serialize.addField "id" (Serialize.jsonString system.iam)
+        in
         let exists =
           Map.tryFind (Buffer.toString "binary" target) system.dhts <> None
         in
@@ -304,9 +308,12 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
       fun donef ->
         let gotQuery target query dht =
           query
+          |> dump "request"
           |> Serialize.addField
                "target"
-               (Serialize.jsonString (Buffer.toString "binary" target))
+               (Serialize.field "id" query
+                |> optionDefault (Serialize.jsonNull ())
+               )
           |> Serialize.addField
                "rid"
                (Serialize.field "qid" query

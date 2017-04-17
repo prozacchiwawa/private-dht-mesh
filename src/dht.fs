@@ -119,7 +119,11 @@ let _request
       (self : DHT) : DHT =
   let newRequest =
     { Request.peer = peer
-    ; Request.body = request
+    ; Request.body =
+        request
+        |> Serialize.addField
+             "id"
+             (Serialize.jsonString (Buffer.toString "binary" peer.id))
     ; Request.launched = self._tick
     }
   in
@@ -182,8 +186,7 @@ let query
 let makePingBody qid (self : DHT) =
   Serialize.jsonObject
     [| ("command", Serialize.jsonString "_ping") ;
-       ("qid", Serialize.jsonString qid) ;
-       ("id", Buffer.toString "binary" self.id |> Serialize.jsonString)
+       ("qid", Serialize.jsonString qid)
     |]
 
 let _check socketInFlight node self =
@@ -362,8 +365,7 @@ let _onquery request (peer : NodeIdent) (self : DHT) : DHT =
 
 let _onping rid request (peer : NodeIdent) (self : DHT) : DHT =
   let res =
-    [| ("id", Buffer.toString "binary" self.id |> Serialize.jsonString) ;
-       ("rid", Serialize.jsonString rid) ;
+    [| ("rid", Serialize.jsonString rid) ;
        ("value", Serialize.jsonString (encodePeers [|peer|]))
     |]
     |> Serialize.jsonObject
@@ -388,11 +390,7 @@ let _onfindnode
            let res =
              Serialize.jsonObject
                (Seq.concat
-                  [ [ ("id",
-                       Buffer.toString "binary" self.id
-                       |> Serialize.jsonString
-                      )
-                    ; ("command", Serialize.jsonString "_find_repl")
+                  [ [ ("command", Serialize.jsonString "_find_repl")
                     ; ("rid", Serialize.jsonString rid)
                     ; ("nodes",
                        Serialize.jsonString
@@ -672,7 +670,6 @@ let _findnode socketInFlight (qid : string) (id : Buffer) (target : NodeIdent op
   let q =
     [| ("command", Serialize.jsonString "_find_node")
      ; ("target", Serialize.jsonString (Buffer.toString "binary" id))
-     ; ("id", Serialize.jsonString (Buffer.toString "binary" self.id))
      ; ("qid", Serialize.jsonString qid)
     |]
     |> Serialize.jsonObject

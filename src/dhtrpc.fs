@@ -102,7 +102,9 @@ let startQuery dhtOps (query : Query) dwq =
 let directQuery dhtOps tid query dwq =
   let id = ShortId.generate () in
   let qWithId =
-    Serialize.addField "txid" (Serialize.jsonString id) query
+    query
+    |> Serialize.addField "txid" (Serialize.jsonString id)
+    |> Serialize.addField "target" (Serialize.jsonString (Buffer.toString "binary" tid))
   in
   let currentClosest = dhtOps.closest 8 tid dwq.dht in
   let queryObject =
