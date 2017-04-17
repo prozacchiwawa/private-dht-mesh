@@ -38,7 +38,8 @@ type DHTWithQueryProcessing<'dht> =
   }
 
 and DHTOps<'dht> =
-  { findnode : Buffer -> Buffer option -> 'dht -> 'dht
+  { dhtId : 'dht -> Buffer
+  ; findnode : Buffer -> Buffer option -> 'dht -> 'dht
   ; query : int -> Buffer -> Serialize.Json -> 'dht -> 'dht
   ; closest : int -> Buffer -> 'dht -> NodeIdent array
   ; harvest : 'dht -> (InternalAction list * 'dht)
@@ -62,14 +63,20 @@ let startQuery dhtOps (query : Query) dwq =
     else
       None
   in
-  if toask |> optionMap (fun t -> t.id = query.tid) |> optionDefault false then
+  let _ =
+    printfn
+      "startQuery: ask %A"
+      (toask |> optionMap (fun n -> Buffer.toString "binary" n.id))
+  in
+  let removeId = Buffer.toString "binary" query.tid in
+  if toask |> optionMap (fun t -> Buffer.equal t.id query.tid) |> optionDefault false then
     { dwq with
         activeQueries =
           Map.add
             query.id
             query
             dwq.activeQueries ;
-        drilling = Map.remove query.id dwq.drilling ;
+        drilling = Map.remove removeId dwq.drilling ;
         dht =
           dhtOps.query
             (dwq.drilling.Count + dwq.activeQueries.Count)
@@ -78,12 +85,13 @@ let startQuery dhtOps (query : Query) dwq =
             dwq.dht
     }
   else
+    let _ = printfn "drill down toward our guy %A" removeId in
     { dwq with
-        activeQueries =
+        drilling =
           Map.add
-            query.id
+            removeId
             query
-            dwq.activeQueries ;
+            dwq.drilling ;
         dht =
           dhtOps.findnode
             query.tid
@@ -196,59 +204,70 @@ let (kBucketOps : KBucketAbstract<Buffer,Node>) =
   ; keyNth = Buffer.at
   ; idEqual = Buffer.equal
   ; idLess = fun a b -> Buffer.compare a b < 0
-  } 
-                   
-let takeFind dhtOps peers (q : Query) dwq =
+  }
+
+let sortClosest tid (incoming : NodeIdent array) = 
+  incoming
+  |> Array.map (fun n -> (n, KBucket.defaultDistance kBucketOps n.id tid))
+  |> Array.sortWith
+       (fun (a,ad) (b,bd) ->
+         if ad < bd then
+           -1
+         else if ad > bd then
+           1
+         else
+           0
+       )
+  |> Array.map (fun (a,_) -> a)
+               
+let takeFind dhtOps id peers (q : Query) dwq =
   let toComparable (n : NodeIdent) =
     (Buffer.toString "binary" n.id, n.host, n.port)
   in
   let qClosest = Set.ofSeq (Array.map toComparable q.closest) in
   let incoming = Set.ofSeq (Array.map toComparable peers) in
   let total = Set.union qClosest incoming in
+  let _ =
+    printfn
+      "Prev closest %d got %d union %d"
+      qClosest.Count
+      incoming.Count
+      total.Count
+  in
   if total.Count = qClosest.Count then
     (* We didn't advance, we're as close as we come *)
-    if Array.length q.closest > 0 then
+    if Array.length q.closest > 0 && Buffer.equal q.closest.[0].id q.tid then
       startQuery dhtOps q dwq
     else
       { dwq with
-          drilling = Map.remove q.id dwq.drilling ;
+          drilling = Map.remove (Buffer.toString "binary" q.tid) dwq.drilling ;
           activeQueries = Map.remove q.id dwq.activeQueries ;
           events = (QueryError (q.id, q.tid, "node not found")) :: dwq.events
       }
   else
     (* Still advancing *)
     let closestWithDistances =
-      Set.toSeq total
+      incoming
+      |> Set.toSeq
       |> Array.ofSeq
       |> Array.map
            (fun (id,host,port) ->
              let bid = Buffer.fromString id "binary" in
-             ({ NodeIdent.id = bid
-              ; NodeIdent.host = host
-              ; NodeIdent.port = port
-              }
-             ,KBucket.defaultDistance kBucketOps bid q.tid
-             )
+             { NodeIdent.id = bid
+             ; NodeIdent.host = host
+             ; NodeIdent.port = port
+             }
            )
-      |> Array.sortWith
-           (fun (a,ad) (b,bd) ->
-             if ad < bd then
-               -1
-             else if ad > bd then
-               1
-             else
-               0
-           )
-      |> Array.map (fun (a,_) -> a)
+      |> sortClosest q.tid
     in
-    { dwq with
-        drilling =
-          Map.add
-            q.id
-            { q with closest = Array.sub closestWithDistances 0 8 }
-            dwq.drilling
-    }
-
+    let _ = printfn "Closest by distance %A -> %A" (Buffer.toString "binary" q.tid) (Array.map (fun (n : NodeIdent) -> (n.host,KBucket.defaultDistance kBucketOps q.tid n.id)) closestWithDistances) in
+    startQuery
+      dhtOps
+      { q with closest = Array.sub closestWithDistances 0 8 }
+      { dwq with 
+          drilling = Map.remove (Buffer.toString "binary" q.tid) dwq.drilling
+      }
+      
 let rec dhtPassThrough (dht : DHT.DHT) : (InternalAction list * DHT.DHT) =
   (dht.events
    |> Seq.map
@@ -275,8 +294,12 @@ let tick
     (fun (dwq : DHTWithQueryProcessing<'dht>) (evt : InternalAction) ->
       match evt with
       | Find (target,peers) ->
-         (match Map.tryFind (Buffer.toString "binary" target) dwq.drilling with
-          | Some q -> takeFind dhtOps peers q dwq
+         let drillingFor =
+           Map.tryFind (Buffer.toString "binary" target) dwq.drilling
+         in
+         let _ = printfn "Find found drilling %A" drillingFor in
+         (match drillingFor with
+          | Some q -> takeFind dhtOps target peers q dwq
           | None -> dwq
          )
       | Payload (json,source) ->
@@ -284,6 +307,7 @@ let tick
       | Datagram (json,source) ->
          { dwq with events = (SendDatagram (json,source)) :: dwq.events }
       | Bootstrapped ->
+         let _ = printfn "Bootstrapped: releasing %A" dwq.pendingQueries in
          match dwq.pendingQueries with
          | hd :: tl ->
             startQuery dhtOps hd { dwq with pendingQueries = tl }

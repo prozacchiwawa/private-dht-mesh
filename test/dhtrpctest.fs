@@ -43,19 +43,42 @@ let fakeKBucketOps =
   }
 
 let addNode n system =
-  let newId = (string n) in
+  let previousNodes n system =
+    Seq.init
+      (n - 1)
+      (fun nn ->
+        let id = DHT.hashId (string (system.dhts.Count - nn - 1)) in
+        let idString = Buffer.toString "binary" id in
+        (Map.find idString system.dhts).node
+      )
+  in
+  let newId = string n in
   let id = DHT.hashId newId in
   let idString = Buffer.toString "binary" id in
   let fakeNode =
     { id = id
     ; host = newId
     ; port = 9999
-    ; 
     }
   in
   let fakeDht =
+    let nodes =
+      Seq.fold
+        (fun nodes node ->
+          let (nodes,events) =
+            KBucket.add
+              fakeKBucketOps
+              nodes
+              node
+              None
+          in
+          nodes
+        )
+        (KBucket.init id)
+        (previousNodes n system)
+    in
     { node = fakeNode
-    ; nodes = KBucket.init id
+    ; nodes = nodes
     ; events = [Ready]
     }
   in
@@ -87,7 +110,7 @@ let allDhts =
     { iam = idString
     ; dhts = Map.empty
     }
-    (Seq.init 100 id)
+    (Seq.init 200 id)
 
 let harvest system =
   Map.tryFind system.iam system.dhts
@@ -97,13 +120,14 @@ let harvest system =
          |> Seq.map
               (fun evt ->
                 match evt with
+                | FindNode (id,nodes) -> [DHTRPC.Find (id,nodes)]
                 | Datagram (json,tgt) -> [DHTRPC.Datagram (json,tgt)]
                 | Payload (json,tgt) -> [DHTRPC.Payload (json,tgt)]
                 | Ready -> [DHTRPC.Bootstrapped]
-                | _ -> []
               )
          |> Seq.concat
          |> List.ofSeq
+         |> (fun a -> printfn "events %A" a ; a)
         ,{ system with
              dhts =
                Map.add
@@ -122,6 +146,7 @@ let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
           |> optionMap (Buffer.toString "binary")
           |> optionDefault system.iam
         in
+        let _ = printfn "Find: ask %A" which in
         Map.tryFind which system.dhts
         |> optionMap
              (fun dht ->
@@ -133,16 +158,22 @@ let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
                    8
                    None
                in
-               let idArray =
-                 Array.map
-                   (fun n ->
-                     { NodeIdent.id = n.id
-                     ; NodeIdent.host = n.host
-                     ; NodeIdent.port = n.port
-                     }
-                   )
-                   closest
-               in
+               Array.map
+                 (fun n ->
+                   { NodeIdent.id = n.id
+                   ; NodeIdent.host = n.host
+                   ; NodeIdent.port = n.port
+                   }
+                 )
+                 closest
+             )
+        |> optionThen
+             (fun idArray ->
+               Map.tryFind system.iam system.dhts
+               |> optionMap (fun dht -> (idArray,dht))
+             )
+        |> optionMap
+             (fun (idArray,dht) ->
                { system with
                    dhts =
                      Map.add
@@ -195,13 +226,62 @@ let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
         |> optionDefault [| |]
   ; harvest = harvest
   ; tick = id
+  ; dhtId =
+      fun system ->
+        Map.find system.iam system.dhts
+        |> (fun dht -> dht.node.id)
   }
                                                    
 let (tests : (string * ((unit -> unit) -> unit)) list) =
-  [ "query sends a query to a target node" =>
+  [ "closest?" =>
+      fun donef ->
+        let a = Buffer.fromArray [|0xaa;0x55|] in
+        let b = Buffer.fromArray [|0xaa;0x5a|] in
+        let c = Buffer.fromArray [|0xa5;0x55|] in
+        let nodes =
+          [|a;b;c|]
+          |> Array.map
+               (fun a ->
+                 { NodeIdent.id = a
+                 ; NodeIdent.host = Buffer.toString "binary" a
+                 ; NodeIdent.port = 0
+                 }
+               )
+        in
+        let sorted = DHTRPC.sortClosest b nodes in
+        let _ = massert.ok (sorted = [|nodes.[1];nodes.[0];nodes.[2]|]) in
+        donef ()
+  ; "distance?" =>
+      fun donef ->
+        let a = Buffer.fromArray [|0x55;0xaa|] in
+        let b = Buffer.fromArray [|0x56;0xff|] in
+        let dist = KBucket.defaultDistance fakeKBucketOps a b in
+        let _ = printfn "distance %A" dist in
+        let _ = massert.ok (dist = [|3;0x55|]) in
+        donef ()
+  ; "determineBucket" =>
+      fun donef ->
+        let a = Buffer.fromArray [|0x55;0xaa|] in
+        let which = [|-1;1;-1;1;-1;1;-1;1;1;-1;1;-1;1;-1;1;-1|] in
+        let determined =
+          Seq.map
+            (fun i ->
+              KBucket.determineBucket
+                fakeKBucketOps
+                a
+                (Some i)
+            )
+            (Seq.init (Array.length which) id)
+          |> Array.ofSeq
+        in
+        let _ = printfn "determined %A" determined in
+        let _ = massert.ok (determined = which) in
+        donef ()
+  ; "query sends a query to a target node" =>
       fun donef ->
         let q = ref false in
         let gotQuery target query dht =
+          let _ = printfn "query came in: %A" query in
           let _ = q := true in
           Serialize.jsonObject [| |]
         in
@@ -214,6 +294,12 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
         let query = Serialize.jsonObject [| |] in
         let (initdq : DHTRPC.DHTWithQueryProcessing<FakeSystem>) =
           DHTRPC.directQuery ops target query rpc
+        in
+        let rdq =
+          Seq.fold
+            (fun rpc _ -> DHTRPC.tick ops rpc)
+            initdq
+            (Seq.init 16 id)
         in
         let _ = massert.ok !q in
         donef ()

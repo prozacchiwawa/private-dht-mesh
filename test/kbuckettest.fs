@@ -50,7 +50,7 @@ let tests =
         let kb = KBucket.init (nodeId id) in
         let contact = newContactString "a" in
         let (kb2,_) = KBucket.add kbOps kb contact None in
-        massert.ok (kb2.bucket = Some [|contact|]) ;
+        let _ = massert.ok (kb2.storage = Self [|contact|]) in
         donef ()
 
   ; "adding an existing contact does not increase number of contacts in bucket" =>
@@ -61,7 +61,12 @@ let tests =
         let ct2 = newContactString "a" in
         let (kb2,_) = KBucket.add kbOps kb contact None in
         let (kb3,_) = KBucket.add kbOps kb2 ct2 None in
-        massert.ok ((kb3.bucket |> optionMap Array.length) = Some 1) ;
+        let kbBucket =
+          match kb3.storage with
+          | Self bucket -> bucket
+          | Split _ -> [||]
+        in
+        let _ = massert.ok (Array.length kbBucket = 1) in
         donef ()
 
   ; "adding same contact moves it to the end of the bucket (most-recently-contacted end)" =>
@@ -70,21 +75,28 @@ let tests =
         let kb = KBucket.init (nodeId id) in
         let contact = newContactString "a" in
         let (kb2,_) = KBucket.add kbOps kb contact None in
-        let _ = massert.ok ((kb2.bucket |> optionMap Array.length) = Some 1) in
+        let kb2Bucket =
+          match kb2.storage with
+          | Self bucket -> bucket
+          | Split _ -> [||]
+        in
+        let _ = massert.ok (Array.length kb2Bucket = 1) in
         let (kb3,_) = KBucket.add kbOps kb2 (newContactString "b") None in
-        let _ = massert.ok ((kb3.bucket |> optionMap Array.length) = Some 2) in
-        let _ =
-          massert.ok
-            ((kb3.bucket |> optionMap (fun a -> a.[0])) =
-               (Some contact))
+        let kb3Bucket =
+          match kb3.storage with
+          | Self bucket -> bucket
+          | Split _ -> [||]
         in
+        let _ = massert.ok (Array.length kb3Bucket = 2) in
+        let _ = massert.ok (kb3Bucket.[0] = contact) in
         let (kb4,_) = KBucket.add kbOps kb3 contact None in
-        let _ = massert.ok ((kb4.bucket |> optionMap Array.length) = Some 2) in
-        let _ =
-          massert.ok
-            ((kb4.bucket |> optionMap (fun a -> a.[1])) =
-               (Some contact))
+        let kb4Bucket =
+          match kb4.storage with
+          | Self bucket -> bucket
+          | Split _ -> [||]
         in
+        let _ = massert.ok (Array.length kb4Bucket = 2) in
+        let _ = massert.ok (kb4Bucket.[1] = contact) in
         donef ()
 
   ; "adding contact to bucket that can\'t be split results in emitting \"ping\" event" =>
@@ -106,12 +118,12 @@ let tests =
         !pings
         |> Seq.mapi
              (fun i a ->
-               match (a, (!kb).high) with
-               | (Ping (contacts, replacement), Some high) ->
+               match (a, (!kb).storage) with
+               | (Ping (contacts, replacement), Split (low,high)) ->
                   begin
                     let iString = [| 0x80; i |] in
-                    match high.bucket with
-                    | Some bucket ->
+                    match high.storage with
+                    | Self bucket ->
                        massert.ok ((Array.ofSeq contacts).[i] = bucket.[i]) ;
                        massert.ok 
                          (newContactBuffer (Buffer.fromArray iString) =
@@ -253,7 +265,7 @@ let tests =
       fun donef ->
         let kb = KBucket.init (nodeId (ShortId.generate ())) in
         massert.ok
-          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0|]) (Some 0)) =
+          ((KBucket.determineBucket kbOps (Buffer.fromArray [|0|]) (Some 0)) =
              -1) ;
         donef ()
 
@@ -261,7 +273,7 @@ let tests =
       fun donef ->
         let kb = KBucket.init (nodeId (ShortId.generate ())) in
         massert.ok
-          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x40|]) (Some 0)) =
+          ((KBucket.determineBucket kbOps (Buffer.fromArray [|0x40|]) (Some 0)) =
              -1) ;
         donef ()
 
@@ -269,7 +281,7 @@ let tests =
       fun donef ->
         let kb = KBucket.init (nodeId (ShortId.generate ())) in
         massert.ok
-          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x40|]) (Some 1)) =
+          ((KBucket.determineBucket kbOps (Buffer.fromArray [|0x40|]) (Some 1)) =
              1) ;
         donef ()
 
@@ -277,7 +289,7 @@ let tests =
       fun donef ->
         let kb = KBucket.init (nodeId (ShortId.generate ())) in
         massert.ok
-          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x40|]) (Some 2)) =
+          ((KBucket.determineBucket kbOps (Buffer.fromArray [|0x40|]) (Some 2)) =
              -1) ;
         donef ()
 
@@ -285,7 +297,7 @@ let tests =
       fun donef ->
         let kb = KBucket.init (nodeId (ShortId.generate ())) in
         massert.ok
-          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x40|]) (Some 9)) =
+          ((KBucket.determineBucket kbOps (Buffer.fromArray [|0x40|]) (Some 9)) =
              -1) ;
         donef ()
 
@@ -293,7 +305,7 @@ let tests =
       fun donef ->
         let kb = KBucket.init (nodeId (ShortId.generate ())) in
         massert.ok
-          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x41|]) (Some 7)) =
+          ((KBucket.determineBucket kbOps (Buffer.fromArray [|0x41|]) (Some 7)) =
              1) ;
         donef ()
 
@@ -301,7 +313,7 @@ let tests =
       fun donef ->
         let kb = KBucket.init (nodeId (ShortId.generate ())) in
         massert.ok
-          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0x41;0|]) (Some 7)) =
+          ((KBucket.determineBucket kbOps (Buffer.fromArray [|0x41;0|]) (Some 7)) =
              1) ;
         donef ()
 
@@ -309,7 +321,7 @@ let tests =
       fun donef ->
         let kb = KBucket.init (nodeId (ShortId.generate ())) in
         massert.ok
-          ((KBucket.determineBucket kbOps kb (Buffer.fromArray [|0;41;0|]) (Some 15)) =
+          ((KBucket.determineBucket kbOps (Buffer.fromArray [|0;41;0|]) (Some 15)) =
              1) ;
         donef ()
 
@@ -411,10 +423,10 @@ let tests =
             ) ;
         let toDelete = (newContactBuffer (Buffer.fromArray [|0x80;0|])) in
         let highBucketMatch toDelete =
-          match (!kb).high with
-          | Some high ->
-             match high.bucket with
-             | Some bucket ->
+          match (!kb).storage with
+          | Split (low,high) ->
+             match high.storage with
+             | Self bucket ->
                 let firstMatch =
                   bucket |> Seq.mapi (fun i c -> (i,c))
                   |> Seq.skipWhile (fun (i,c) -> c.id <> toDelete.id)
@@ -422,8 +434,8 @@ let tests =
                   |> List.ofSeq
                 in
                 firstMatch <> []
-             | None -> false
-           | None -> false
+             | _ -> false
+           | _ -> false
         in
         let _ = massert.ok (highBucketMatch toDelete) in
         let (kb2,_) = KBucket.remove kbOps !kb toDelete.id None in
@@ -436,8 +448,8 @@ let tests =
         let kb = ref (KBucket.init (nodeId (ShortId.generate ()))) in
         let pings = ref [] in
         kbadd kb pings (newContactString "a") ;
-        (match ((!kb).bucket,(!kb).low,(!kb).high) with
-         | (Some bucket,None,None) -> massert.ok true
+        (match (!kb).storage with
+         | Self bucket -> massert.ok true
          | _ -> massert.ok false
         ) ;
         donef ()
@@ -456,8 +468,8 @@ let tests =
           begin
             kbadd kb pings (newContactString (string i))
           end ;
-        (match ((!kb).bucket,(!kb).low,(!kb).high) with
-         | (Some bucket,None,None) -> massert.ok true
+        (match (!kb).storage with
+         | Self bucket -> massert.ok true
          | _ -> massert.ok false
         ) ;
         donef ()
@@ -476,8 +488,8 @@ let tests =
           begin
             kbadd kb pings (newContactString (string i))
           end ;
-        (match ((!kb).bucket,(!kb).low,(!kb).high) with
-         | (None,Some low,Some high) -> massert.ok true
+        (match (!kb).storage with
+         | Split (low,high) -> massert.ok true
          | _ -> massert.ok false
         ) ;
         donef ()
@@ -499,12 +511,11 @@ let tests =
   ; "split buckets contain all added contacts" =>
       fun donef ->
         let rec traverse kb =
-          match (kb.bucket,kb.low,kb.high) with
-          | (Some bucket,None,None) ->
+          match kb.storage with
+          | Self bucket ->
              Seq.concat [bucket]
-          | (None,Some low,Some high) ->
+          | Split (low,high) ->
              Seq.concat [traverse low;traverse high]
-          | _ -> failwith "Expected bucket or low,high"
         in
         let kb = ref (KBucket.init (Buffer.fromArray [|0|])) in
         let pings = ref [] in
@@ -523,25 +534,29 @@ let tests =
                  foundContact := Map.add i true !foundContact
                )
         in
+        let isSplit kb =
+          match kb.storage with
+          | Self _ -> false
+          | Split _ -> true
+        in
         massert.ok
           (!foundContact
            |> Map.toSeq
            |> Seq.exists (fun (k,v) -> not v)
            |> not
           ) ;
-        massert.ok ((!kb).bucket = None) ;
+        massert.ok (isSplit !kb) ;
         donef ()
 
   ; "when splitting buckets the \"far away\" bucket should be marked to prevent splitting \"far away\" bucket" =>
       fun donef ->
         let rec traverse node dontSplit =
-          match (node.bucket,node.low,node.high) with
-          | (None, Some low, Some high) ->
+          match node.storage with
+          | Split (low,high) ->
              traverse low false ;
              traverse high true
-          | (Some bucket, _, _) ->
+          | Self bucket ->
              massert.ok (node.dontSplit = dontSplit)
-          | _ -> failwith "Expected bucket or low,high"
         in
         let kb = ref (KBucket.init (Buffer.fromArray [|0|])) in
         let pings = ref [] in

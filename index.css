@@ -1,0 +1,45 @@
+body {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+}
+
+.bucket {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    padding: 0.5rem;
+    border: 1px solid black;
+}
+
+.content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.id {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+}
+
+.split {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+}
+
+.left {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    background-color: #f87;
+}
+
+.right {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    background-color: #8f7;
+}

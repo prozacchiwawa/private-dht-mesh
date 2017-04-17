@@ -5,6 +5,7 @@
 #load "../src/wrap/buffer.fs"
 #load "../src/wrap/shortid.fs"
 #load "../src/wrap/q.fs"
+#load "../src/wrap/q-io.fs"
 #load "../src/wrap/dns.fs"
 #load "../src/wrap/ipaddr.fs"
 #load "../src/wrap/network.fs"

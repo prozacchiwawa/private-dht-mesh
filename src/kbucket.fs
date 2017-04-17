@@ -29,12 +29,14 @@ module Constants =
   let DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET = 20
   let DEFAULT_NUMBER_OF_NODES_TO_PING = 3
 
-type KBucket<'id,'a> =
+type Storage<'id,'a> =
+  | Self of ('a array)
+  | Split of (KBucket<'id,'a> * KBucket<'id,'a>)
+                                          
+and KBucket<'id,'a> =
   { localNodeId : 'id
-  ; bucket : 'a array option
   ; dontSplit : bool
-  ; low : KBucket<'id,'a> option
-  ; high : KBucket<'id,'a> option
+  ; storage : Storage<'id,'a>
   }
 
 type KBucketAbstract<'id,'a> =
@@ -93,17 +95,15 @@ let (&+) ((s,a) : ('v * Action<'id,'a> list)) (f : 'v -> ('v * Action<'id,'a> li
 
 let init localNodeId =
   { localNodeId = localNodeId
-  ; bucket = Some [||]
   ; dontSplit = false
-  ; low = None
-  ; high = None
+  ; storage = Self [||]
   }
 
 
 (* Returns the index of the contact if it exists *)
 let indexOf ops id self =
-  match self.bucket with
-  | Some bucket ->
+  match self.storage with
+  | Self bucket ->
      bucket
      |> Seq.mapi (fun i c -> (i,c))
      |> Seq.skipWhile (fun (i,c) -> not (ops.idEqual id (ops.nodeId c)))
@@ -123,13 +123,12 @@ let defaultDistance (ops : KBucketAbstract<'id,'a>) (firstId : 'id) (secondId : 
   let ll = ops.keyLength longer in
   let sl = ops.keyLength shorter in
   let accumulator = Array.zeroCreate ll in
-  for i = 0 to ll do
+  for i = 0 to (ll - 1) do
     begin
-      let idx = ll - i - 1 in
       if i >= sl then
-        accumulator.[idx] <- 255
+        accumulator.[i] <- 255
       else
-        accumulator.[idx] <- ((ops.keyNth i firstId) ^^^ (ops.keyNth i secondId))
+        accumulator.[i] <- ((ops.keyNth i firstId) ^^^ (ops.keyNth i secondId))
     end ;
   accumulator
 
@@ -137,7 +136,7 @@ let defaultDistance (ops : KBucketAbstract<'id,'a>) (firstId : 'id) (secondId : 
 // id: a Buffer to compare localNodeId with
 // bitIndex: the bitIndex to which bit to check in the id Buffer
 *)
-let determineBucket (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (id : 'id) (bitIndexOpt : int option) =
+let determineBucket (ops : KBucketAbstract<'id,'a>) (id : 'id) (bitIndexOpt : int option) =
   let bitIndex = bitIndexOpt |> optionDefault 0 in
 
   (* **NOTE** remember that id is a Buffer and has granularity of
@@ -189,23 +188,19 @@ let rec addInternal
       (bitIndexOpt : int option) : (KBucket<'id,'a> * Action<'id,'a> list) =
   let bitIndex = bitIndexOpt |> optionDefault 0 in
   let bitIndexPP = bitIndex + 1 in
-  match (self.bucket, self.low, self.high) with
-  | (None, Some low, Some high) ->
-      if (determineBucket ops self (ops.nodeId contact) (Some (bitIndex))) < 0 then
+  match self.storage with
+  | Split (low,high) ->
+      if (determineBucket ops (ops.nodeId contact) (Some (bitIndex))) < 0 then
         (* this is not a leaf node but an inner node with 'low' and 'high'
         // branches; we will check the appropriate bit of the identifier and
         // delegate to the appropriate node for further processing
         *)
         intr.addInternal ops intr low contact (Some bitIndexPP) &+
-          (fun low ->
-            { self with low = Some low } &> []
-          )
+          (fun low -> { self with storage = Split (low,high) } &> [])
       else
         intr.addInternal ops intr high contact (Some bitIndexPP) &+
-          (fun high ->
-            { self with high = Some high } &> []
-          )
-  | (Some bucket, _, _) ->
+          (fun high -> { self with storage = Split (low,high) } &> [])
+  | Self bucket ->
      (* Check if the contact already exists *)
      let index = indexOf ops (ops.nodeId contact) self in
      if index >= 0 then
@@ -213,7 +208,7 @@ let rec addInternal
      else
        (* The bucket is full *)
        if Array.length bucket < Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET then
-         { self with bucket = Some (Array.append bucket [|contact|]) } &> []
+         { self with storage = Self (Array.append bucket [|contact|]) } &> []
        else if self.dontSplit then
          (* we are not allowed to split the bucket
          // we need to ping the first constants.DEFAULT_NUMBER_OF_NODES_TO_PING
@@ -225,7 +220,6 @@ let rec addInternal
            [Ping (Array.sub bucket 0 Constants.DEFAULT_NUMBER_OF_NODES_TO_PING, contact)]
        else
          intr.splitAndAddInternal ops intr self contact (Some bitIndex)
-  | _ -> failwith "Expected bucket or low,high"
 
 (* contact: Object *required* contact object
 // id: Buffer *require* node id
@@ -240,67 +234,63 @@ let rec closest
       (n : int)
       (bitIndexOpt : int option) : 'a array =
   let bitIndex = bitIndexOpt |> optionDefault 0 in
-  match (self.bucket, self.low, self.high) with
-  | (None, Some low, Some high) ->
-     let contacts = ref [||] in
-     let _ =
-       if determineBucket ops self contact (Some bitIndex) < 0 then
+  let contacts =
+    match self.storage with
+    | Split (low,high) ->
+       if determineBucket ops contact (Some bitIndex) < 0 then
          begin
-           let contactsVal = closest ops low contact n (Some bitIndex) in
+           let contactsVal = closest ops low contact n (Some (bitIndex + 1)) in
            if Array.length contactsVal < n then
-             let contactsVal2 = closest ops high contact n (Some bitIndex) in
-             contacts := Array.append !contacts (Array.append contactsVal contactsVal2)
+             let contactsVal2 = closest ops high contact n (Some (bitIndex + 1)) in
+             Array.append contactsVal contactsVal2
            else
-             contacts := Array.append !contacts contactsVal
+             contactsVal
          end
        else
          begin
-           let contactsVal = closest ops high contact n (Some bitIndex) in
+           let contactsVal = closest ops high contact n (Some (bitIndex + 1)) in
            if Array.length contactsVal < n then
-             let contactsVal2 = closest ops low contact n (Some bitIndex) in
-             contacts := Array.append !contacts (Array.append contactsVal contactsVal2)
+             let contactsVal2 = closest ops low contact n (Some (bitIndex + 1)) in
+             Array.append contactsVal contactsVal2
            else
-             contacts := Array.append !contacts contactsVal
+             contactsVal
          end
-     in
-     (Array.sub !contacts 0 n)
-  | (Some bucket, _, _) ->
-     let distances =
-       Array.map
-         (fun storedContact ->
-           (storedContact, ops.distance ops (ops.nodeId storedContact) contact)
-         )
-         bucket
-     in
-     let sorted =
-       Array.sortWith
-         (fun (a,ad) (b,bd) ->
-           if ad < bd then
-             -1
-           else if ad > bd then
-             1
-           else
-             0
-         )
-         distances
-     in
-     let (sortedContacts : 'a array) =
-       Array.map (fun (a,ad) -> a) sorted
-     in
-     (Array.sub sortedContacts 0 n)
-  | _ -> failwith "Expected bucket or low and high"
-                  
+    | Self bucket -> bucket
+  in
+  let distances =
+    Array.map
+      (fun storedContact ->
+        (storedContact, ops.distance ops (ops.nodeId storedContact) contact)
+      )
+      contacts
+  in
+  let sorted =
+    Array.sortWith
+      (fun (a,ad) (b,bd) ->
+        if ad < bd then
+          -1
+        else if ad > bd then
+          1
+        else
+          0
+      )
+      distances
+  in
+  let (sortedContacts : 'a array) =
+    Array.map (fun (a,ad) -> a) sorted
+  in
+  (Array.sub sortedContacts 0 n)
+                
 (* Counts the number of contacts recursively.
 // If this is a leaf, just return the number of contacts contained. Otherwise,
 // return the length of the high and low branches combined.
 *)
 let rec count (self : KBucket<'id,'a>) =
-  match (self.bucket, self.low, self.high) with
-  | (Some bucket, _, _) ->
+  match self.storage with
+  | Self bucket ->
     Array.length bucket
-  | (_, Some low, Some high) ->
+  | Split (low,high) ->
     (count high) + (count low)
-  | _ -> failwith "Bucket or Low and High expected"
 
 (* Get a contact by its exact ID.
 // If this is a leaf, loop through the bucket contents and return the correct
@@ -314,20 +304,19 @@ let rec get (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (id : 'id) 
   let bitIndex = bitIndexOpt |> optionDefault 0 in
   let bitIndexPP = bitIndex + 1 in
 
-  match (self.bucket, self.low, self.high) with
-  | (None, Some low, Some high) ->
-      if determineBucket ops self id (Some bitIndex) < 0 then
+  match self.storage with
+  | Split (low,high) ->
+      if determineBucket ops id (Some bitIndex) < 0 then
         get ops low id (Some bitIndexPP)
       else
         get ops high id (Some bitIndexPP)
-  | (Some bucket, _, _) ->
+  | Self bucket ->
      let index = indexOf ops id self in (* index of uses contact.id for matching *)
 
      if index < 0 then
        None (* contact not found *)
      else
        Some bucket.[index]
-  | _ -> failwith "Expected bucket or low and high"
 
 (* contact: *required* the contact object to remove
 // bitIndex: the bitIndex to which bit to check in the Buffer for navigating
@@ -335,8 +324,8 @@ let rec get (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (id : 'id) 
 *)
 let rec remove (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (contact : 'id) (bitIndexOpt : int option) =
   (* first check whether we are an inner node or a leaf (with bucket contents) *)
-  match (self.bucket, self.low, self.high) with
-  | (None, Some low, Some high) ->
+  match self.storage with
+  | Split (low,high) ->
      (* this is not a leaf node but an inner node with 'low' and 'high'
      // branches; we will check the appropriate bit of the identifier and
      // delegate to the appropriate node for further processing
@@ -344,17 +333,16 @@ let rec remove (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (contact
      let bitIndex = bitIndexOpt |> optionDefault 0 in
      let bitIndexPP = bitIndex + 1 in
 
-     if determineBucket ops self contact (Some bitIndex) < 0 then
+     if determineBucket ops contact (Some bitIndex) < 0 then
        remove ops low contact (Some bitIndexPP)
      else
        remove ops high contact (Some bitIndexPP)
-  | (Some bucket, _, _) ->
+  | Self bucket ->
      let index = indexOf ops contact self in
      if index >= 0 then
-       { self with bucket = Some (arrayRemove index 1 bucket) } &> []
+       { self with storage = Self (arrayRemove index 1 bucket) } &> []
      else
        self &> []
-  | _ -> failwith "Expected bucket or high and low"
 
 (* Splits the bucket, redistributes contacts to the new buckets, and marks the
 // bucket that was split as an inner node of the binary tree of buckets by
@@ -370,19 +358,19 @@ let rec splitAndAddInternal
     (contact : 'a)
     (bitIndexOpt : int option) =
   let bitIndex = bitIndexOpt |> optionDefault 0 in
-  match (self.bucket, self.low, self.high) with
-  | (Some bucket, None, None) ->
+  match self.storage with
+  | Self bucket ->
      let newLowBucket =
        Array.filter
          (fun storedContact ->
-           determineBucket ops self (ops.nodeId storedContact) (Some bitIndex) < 0
+           determineBucket ops (ops.nodeId storedContact) (Some bitIndex) < 0
          )
          bucket
      in
      let newHighBucket =
        Array.filter
          (fun storedContact ->
-           determineBucket ops self (ops.nodeId storedContact) (Some bitIndex) >= 0
+           determineBucket ops (ops.nodeId storedContact) (Some bitIndex) >= 0
          )
          bucket
      in
@@ -391,24 +379,22 @@ let rec splitAndAddInternal
      // "dontSplit" (i.e. "far away")
      *)
      let whichBucketIsFar =
-       determineBucket ops self self.localNodeId (Some bitIndex) < 0
+       determineBucket ops self.localNodeId (Some bitIndex) < 0
      in
      let splitSelf =
-       { self with
-           bucket = None ;
-           low =
-             Some
-               { init self.localNodeId with
-                   bucket = Some newLowBucket ;
-                   dontSplit = not whichBucketIsFar
-               } ;
-           high =
-             Some
-               { init self.localNodeId with
-                   bucket = Some newHighBucket ;
-                   dontSplit = whichBucketIsFar
-               }
-       }
+       let low =
+         { init self.localNodeId with
+             storage = Self newLowBucket ;
+             dontSplit = not whichBucketIsFar
+         }
+       in
+       let high =
+         { init self.localNodeId with
+             storage = Self newHighBucket ;
+             dontSplit = whichBucketIsFar
+         }
+       in
+       { self with storage = Split (low,high) }
      in
      (* add the contact being added *)
      addInternal ops intr splitSelf contact (Some bitIndex)
@@ -422,10 +408,9 @@ let rec splitAndAddInternal
 // branches (themselves also as arrays).
  *)
 let rec toArray (self : KBucket<'id,'a>) : 'a array =
-  match (self.bucket, self.low, self.high) with
-  | (Some bucket, _, _) -> bucket
-  | (_, Some low, Some high) -> Array.append (toArray low) (toArray high)
-  | (_, _, _) -> failwith "Need bucket or low and high"
+  match self.storage with
+  | Self bucket -> bucket
+  | Split (low,high) -> Array.append (toArray low) (toArray high)
 
 (* Updates the contact selected by the arbiter.
 // If the selection is our old contact and the candidate is some new contact
@@ -440,8 +425,8 @@ let rec toArray (self : KBucket<'id,'a>) : 'a array =
 //        (index has already been computed in a previous calculation)
 *)
 let update (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (contact : 'a) (index : int) =
-  match self.bucket with
-  | Some bucket ->
+  match self.storage with
+  | Self bucket ->
      begin
        let _ =
          if not (ops.idEqual (ops.nodeId bucket.[index]) (ops.nodeId contact)) then
@@ -455,7 +440,11 @@ let update (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (contact : '
          *)
          self &> []
        else
-         { self with bucket = Some (Array.append (arrayRemove index 1 bucket) [|selection|]) } &> []
+         { self with
+             storage =
+               Self
+                 (Array.append (arrayRemove index 1 bucket) [|selection|])
+         } &> []
      end
   | _ -> failwith "Expected bucket"
 
