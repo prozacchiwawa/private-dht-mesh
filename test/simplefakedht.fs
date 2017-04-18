@@ -135,20 +135,18 @@ let harvest system =
        
 let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
   { findnode =
-      fun what target system ->
-        let which =
-          target
-          |> optionMap (Buffer.toString "binary")
-          |> optionDefault system.iam
-        in
-        Map.tryFind which system.dhts
+      fun inFlight (txid : string) (targetId : Buffer) (toAsk : NodeIdent option) system ->
+        toAsk
+        |> optionMap (fun (a : NodeIdent) -> Buffer.toString "binary" a.id)
+        |> optionDefault system.iam
+        |> (fun (a : string) -> Map.tryFind a system.dhts)
         |> optionMap
              (fun dht ->
                let closest =
                  KBucket.closest
                    fakeKBucketOps
                    dht.nodes
-                   what
+                   targetId
                    8
                    None
                in
@@ -172,7 +170,7 @@ let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
                    dhts =
                      Map.add
                        (Buffer.toString "binary" dht.node.id)
-                       { dht with events = FindNode (what, idArray) :: dht.events }
+                       { dht with events = FindNode (targetId, idArray) :: dht.events }
                        system.dhts
                }
              )
@@ -186,7 +184,7 @@ let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
           |> Serialize.addField "id" (Serialize.jsonString system.iam)
         in
         let exists =
-          Map.tryFind (Buffer.toString "binary" target) system.dhts <> None
+          Map.tryFind (Buffer.toString "binary" target.id) system.dhts <> None
         in
         Map.tryFind system.iam system.dhts
         |> optionMap
@@ -225,9 +223,6 @@ let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
              )
         |> optionDefault [| |]
   ; harvest = harvest
-  ; tick = id
-  ; dhtId =
-      fun system ->
-        Map.find system.iam system.dhts
-        |> (fun dht -> dht.node.id)
+  ; tick = fun inFlight system -> system
+  ; dhtId = fun system -> (Map.find system.iam system.dhts).node.id
   }

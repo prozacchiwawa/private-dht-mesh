@@ -20,3 +20,9 @@ and HostIdent =
   { port : int
   ; host : string
   }
+
+let identOfNode (node : Node) =
+  { NodeIdent.id = node.id
+  ; NodeIdent.host = node.host
+  ; NodeIdent.port = node.port
+  }

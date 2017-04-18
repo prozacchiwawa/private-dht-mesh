@@ -147,41 +147,17 @@ let _request
 
 let query
       socketInFlight
-      (target : NodeIdent option)
+      (toask : NodeIdent)
       (query : Serialize.Json)
       (self : DHT) : DHT =
   let qid = ShortId.generate () in
-  target
-  |> optionMap Some
-  |> optionDefault
-       (Serialize.field "target" query
-        |> optionDefault (Serialize.jsonNull ())
-        |> Serialize.asString
-        |> (fun s -> Buffer.fromString s "binary")
-        |> (fun b -> KBucket.closest kBucketOps self.nodes b 1 None)
-        |> (fun a ->
-             if Array.length a > 0 then
-               let n = a.[0] in
-               Some
-                 { NodeIdent.id = n.id
-                 ; NodeIdent.host = n.host
-                 ; NodeIdent.port = n.port
-                 }
-             else
-               None
-           )
-       )
-  |> optionMap
-       (fun closest ->
-         _request
-           socketInFlight
-           qid
-           (Serialize.addField "qid" (Serialize.jsonString qid) query)
-           closest
-           true
-           self
-       )
-  |> optionDefault self
+  _request
+    socketInFlight
+    qid
+    (Serialize.addField "qid" (Serialize.jsonString qid) query)
+    toask
+    true
+    self
                    
 let makePingBody qid (self : DHT) =
   Serialize.jsonObject
@@ -666,16 +642,50 @@ let _onrequest socketInFlight request (peer : NodeIdent) self =
        }
        self
 
-let _findnode socketInFlight (qid : string) (id : Buffer) (target : NodeIdent option) (self : DHT) : DHT =
-  let q =
-    [| ("command", Serialize.jsonString "_find_node")
-     ; ("target", Serialize.jsonString (Buffer.toString "binary" id))
-     ; ("qid", Serialize.jsonString qid)
-    |]
-    |> Serialize.jsonObject
+let closest n what self =
+  KBucket.closest
+    kBucketOps
+    self.nodes
+    what
+    n
+    None
+  |> Array.map identOfNode
+    
+let _findnode
+      socketInFlight
+      (qid : string)
+      (id : Buffer)
+      (toask : NodeIdent option)
+      (self : DHT) : DHT =
+  let toask =
+    match toask with
+    | Some toask -> Some toask
+    | None ->
+       let closest =
+         KBucket.closest
+           kBucketOps
+           self.nodes
+           id
+           1
+           None
+       in
+       if Array.length closest > 0 then
+         Some (identOfNode closest.[0])
+       else
+         None
   in
-  query socketInFlight target (dump "q" q) self
-
+  match toask with
+  | Some toask ->
+     let q =
+       [| ("command", Serialize.jsonString "_find_node")
+        ; ("target", Serialize.jsonString (Buffer.toString "binary" id))
+        ; ("qid", Serialize.jsonString qid)
+       |]
+       |> Serialize.jsonObject
+     in
+     query socketInFlight toask (dump "q" q) self
+  | None -> self
+                   
 let tick socketInFlight self =
   let nextTick = self._tick + 1 in
   let tself = { self with _tick = nextTick } in

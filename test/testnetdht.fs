@@ -16,6 +16,7 @@ type TestDhtEvent =
 type TestSystem =
   { testnet : TestNet<DHTRPC.DWQAction, DHTRPC.DHTWithQueryProcessing<DHT.DHT>>
   ; iam : string
+  ; events : TestDhtEvent list
   }
 
 (* 
@@ -52,6 +53,19 @@ let init =
       Map.empty
       (Seq.init 200 id)
   in
-  { iam = string 0
+  { iam = Buffer.toString "binary" (DHT.hashId (string 0))
   ; testnet = TestNet.init nodes endpoints Map.empty
+  ; events = []
+  }
+
+let harvest testnet =
+  ([], testnet)
+    
+let dhtOps qreply : DHTRPC.DHTOps<DHT.DHT> =
+  { findnode = DHT._findnode
+  ; query = DHT.query
+  ; closest = DHT.closest
+  ; harvest = harvest
+  ; tick = DHT.tick
+  ; dhtId = fun dht -> dht.id
   }

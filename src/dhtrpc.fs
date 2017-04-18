@@ -38,12 +38,31 @@ type DHTWithQueryProcessing<'dht> =
   }
 
 and DHTOps<'dht> =
-  { dhtId : 'dht -> Buffer
-  ; findnode : Buffer -> Buffer option -> 'dht -> 'dht
-  ; query : int -> Buffer -> Serialize.Json -> 'dht -> 'dht
-  ; closest : int -> Buffer -> 'dht -> NodeIdent array
-  ; harvest : 'dht -> (InternalAction list * 'dht)
-  ; tick : 'dht -> 'dht
+  { (* Get the ID of this DHT as a Buffer *)
+    dhtId : 'dht -> Buffer
+  ; (* Start a findnode operation with
+     * - inflight requests
+     * - string Txid
+     * - Buffer node to find
+     * - NodeIdent to ask if known
+     * - DHT
+     *)
+    findnode : int -> string -> Buffer -> NodeIdent option -> 'dht -> 'dht
+  ; (* Deliver a query to the node whose id is in Buffer
+     * - inflight requests
+     * - Buffer node to contact
+     * - Json query to deliver
+     * - DHT
+     *)
+    query : int -> NodeIdent -> Serialize.Json -> 'dht -> 'dht
+  ; (* See KBucket.closest *)
+    closest : int -> Buffer -> 'dht -> NodeIdent array
+  ; (* Harvest events from this object into actionable form.
+     * Return the events and the drained object.
+     *)
+    harvest : 'dht -> (InternalAction list * 'dht)
+  ; (* Run the timer tick given the current number of inflight requests *)
+    tick : int -> 'dht -> 'dht
   }
 
 let init dht =
@@ -64,22 +83,28 @@ let startQuery dhtOps (query : Query) dwq =
       None
   in
   let removeId = Buffer.toString "binary" query.tid in
-  if toask |> optionMap (fun t -> Buffer.equal t.id query.tid) |> optionDefault false then
-    { dwq with
-        activeQueries =
-          Map.add
-            query.id
-            query
-            dwq.activeQueries ;
-        drilling = Map.remove removeId dwq.drilling ;
-        dht =
-          dhtOps.query
-            (dwq.drilling.Count + dwq.activeQueries.Count)
-            query.tid
-            query.passOn
-            dwq.dht
-    }
-  else
+  let askMatch =
+    toask
+    |> optionMap (fun t -> (Buffer.equal t.id query.tid, toask))
+    |> optionDefault (false, None)
+  in
+  match askMatch with
+  | (true, Some toask) ->
+     { dwq with
+         activeQueries =
+           Map.add
+             query.id
+             query
+             dwq.activeQueries ;
+         drilling = Map.remove removeId dwq.drilling ;
+         dht =
+           dhtOps.query
+             (dwq.drilling.Count + dwq.activeQueries.Count)
+             toask
+             query.passOn
+             dwq.dht
+     }
+  | _ ->
     { dwq with
         drilling =
           Map.add
@@ -88,8 +113,10 @@ let startQuery dhtOps (query : Query) dwq =
             dwq.drilling ;
         dht =
           dhtOps.findnode
+            (dwq.drilling.Count + dwq.activeQueries.Count)
+            query.id
             query.tid
-            (toask |> optionMap (fun toask -> toask.id))
+            toask
             dwq.dht
     }
                  
@@ -276,7 +303,9 @@ let rec dhtPassThrough (dht : DHT.DHT) : (InternalAction list * DHT.DHT) =
 let tick
       (dhtOps : DHTOps<'dht>)
       (dwq : DHTWithQueryProcessing<'dht>) : DHTWithQueryProcessing<'dht> =
-  let (dht : 'dht) = dhtOps.tick dwq.dht in
+  let (dht : 'dht) =
+    dhtOps.tick (dwq.drilling.Count + dwq.activeQueries.Count) dwq.dht
+  in
   let (events : InternalAction list, dht) = dhtOps.harvest dht in
   let (dwq : DHTWithQueryProcessing<'dht>) = { dwq with dht = dht } in
   List.fold
