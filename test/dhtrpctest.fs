@@ -40,29 +40,6 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
         let (events,testnet) =
           Seq.fold
             (fun ((events,testnet) : ((string * DHTRPC.DWQAction) list * TestNetDHT.TestSystem)) n ->
-              let _ =
-                if n = 100 then
-                  for i = 0 to 7 do
-                    begin
-                      let dhtrpc =
-                        Map.find
-                          (Buffer.toString
-                             "binary"
-                             (DHT.hashId (TestNetDHT.hostname i))
-                          )
-                          testnet.testnet.nodes
-                      in
-                      DHTVis.writeFile
-                        (fun (n : DHTData.Node) -> n.id)
-                        (fun (n : DHTData.Node) ->
-                          String.concat
-                            " "
-                            [string dhtrpc.dht._tick;n.host]
-                        )
-                        (TestNetDHT.hostname i)
-                        dhtrpc.dht.nodes
-                    end
-              in
               let testnet =
                 if n = 100 then
                   let txid = ShortId.generate () in

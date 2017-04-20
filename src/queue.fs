@@ -1,5 +1,7 @@
 module Queue
 
+(* http://fssnip.net/f7 *)
+         
 let (|Created|_|) (v : Lazy<'T>) =
     if v.IsValueCreated then Some v.Value else None
 

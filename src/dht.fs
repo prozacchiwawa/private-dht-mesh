@@ -1,6 +1,10 @@
 module DHT
 
-(* https://github.com/mafintosh/dht-rpc/blob/master/index.js *)
+(* 
+ * Based in part on
+ * https://github.com/mafintosh/dht-rpc/blob/master/index.js
+ * Which is released under the MIT license.
+ *)
 
 open Util
 open Buffer

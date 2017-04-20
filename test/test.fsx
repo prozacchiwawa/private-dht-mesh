@@ -15,8 +15,6 @@
 #load "../src/forward.fs"
 #load "../src/kbucket.fs"
 #load "../src/dhtdata.fs"
-#load "../src/querystream.fs"
-#load "../src/udpmessages.fs"
 #load "../src/dht.fs"
 #load "../src/dhtrpc.fs"
 #load "./mocha.fs"
@@ -24,7 +22,6 @@
 #load "./testnet.fs"
 #load "./dhttest.fs"
 #load "./dhtvis.fs"
-#load "./simplefakedht.fs"
 #load "./testnetdht.fs"
 #load "./dhtrpctest.fs"
 

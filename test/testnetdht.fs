@@ -10,7 +10,8 @@ open TestNet
 type TestDhtEvent = (string * DHTRPC.DWQAction)
 
 type TestSystem =
-  { testnet : TestNet<DHTRPC.DWQAction, DHTRPC.DHTWithQueryProcessing<DHT.DHT>>
+  { numnodes : int
+  ; testnet : TestNet<DHTRPC.DWQAction, DHTRPC.DHTWithQueryProcessing<DHT.DHT>>
   ; idtonet : Map<string, (string * int)>
   ; events : TestDhtEvent list
   ; tick : int
@@ -23,6 +24,7 @@ let hostname n =
  * each node has a host name of (string n), port 1, id hashId (string n)
  *)
 let init () =
+  let numnodes = 20 in
   let bootstrapHost = hostname 7 in
   let bootstrapId = DHT.hashId bootstrapHost in
   let nodes =
@@ -47,7 +49,7 @@ let init () =
           nodes
       )
       Map.empty
-      (Seq.init 8 id)
+      (Seq.init numnodes id)
   in
   let endpoints =
     Seq.fold
@@ -61,7 +63,7 @@ let init () =
           endpoints
       )
       Map.empty
-      (Seq.init 200 id)
+      (Seq.init numnodes id)
   in
   let (idtonet : Map<string, (string * int)>) =
     endpoints
@@ -69,7 +71,8 @@ let init () =
     |> Seq.map (fun (k,v) -> (v,k))
     |> Map.ofSeq
   in
-  { idtonet = idtonet
+  { numnodes = numnodes
+  ; idtonet = idtonet
   ; testnet = TestNet.init nodes endpoints Map.empty
   ; events = []
   ; tick = 0
