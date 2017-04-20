@@ -21,7 +21,7 @@ let hostname n =
   sprintf "0.0.0.%d" n
     
 (* 
- * each node has a host name of (string n), port 1, id hashId (string n)
+ * each node has a host name of (0.0.0.n), port 1, id hashId (0.0.0.n)
  *)
 let init () =
   let numnodes = 20 in
