@@ -4,6 +4,12 @@ body {
     flex-direction: row;
 }
 
+.title {
+    position: relative;
+    display: block;
+    padding-right: 0.5rem;
+}
+
 .bucket {
     position: relative;
     display: flex;

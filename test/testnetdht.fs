@@ -7,29 +7,39 @@ open DHTData
 open KBucket
 open TestNet
 
-type TestDhtEvent =
-  | Ready
-  | Datagram of Serialize.Json * NodeIdent
-  | Payload of Serialize.Json * NodeIdent
-  | FindNode of Buffer * NodeIdent array
+type TestDhtEvent = (string * DHTRPC.DWQAction)
 
 type TestSystem =
   { testnet : TestNet<DHTRPC.DWQAction, DHTRPC.DHTWithQueryProcessing<DHT.DHT>>
-  ; iam : string
+  ; idtonet : Map<string, (string * int)>
   ; events : TestDhtEvent list
+  ; tick : int
   }
 
+let hostname n =
+  sprintf "0.0.0.%d" n
+    
 (* 
  * each node has a host name of (string n), port 1, id hashId (string n)
  *)
-let init =
+let init () =
+  let bootstrapHost = hostname 7 in
+  let bootstrapId = DHT.hashId bootstrapHost in
   let nodes =
     Seq.fold
       (fun nodes n ->
-        let host = string n in
+        let host = hostname n in
         let id = DHT.hashId host in
         let sid = Buffer.toString "binary" id in
-        let dht = DHT.init { DHT.defaultOpts with id = Some id } in
+        let dht =
+          DHT.init
+            { DHT.defaultOpts with
+                id = Some id ;
+                bootstrap =
+                  [| { id = bootstrapId ; host = bootstrapHost ; port = 1 } |]
+            }
+          |> DHT.bootstrap
+        in
         let rpc = DHTRPC.init dht in
         Map.add
           sid
@@ -37,12 +47,12 @@ let init =
           nodes
       )
       Map.empty
-      (Seq.init 200 id)
+      (Seq.init 8 id)
   in
   let endpoints =
     Seq.fold
       (fun endpoints n ->
-        let host = string n in
+        let host = hostname n in
         let id = DHT.hashId host in
         let sid = Buffer.toString "binary" id in
         Map.add
@@ -53,19 +63,108 @@ let init =
       Map.empty
       (Seq.init 200 id)
   in
-  { iam = Buffer.toString "binary" (DHT.hashId (string 0))
+  let (idtonet : Map<string, (string * int)>) =
+    endpoints
+    |> Map.toSeq
+    |> Seq.map (fun (k,v) -> (v,k))
+    |> Map.ofSeq
+  in
+  { idtonet = idtonet
   ; testnet = TestNet.init nodes endpoints Map.empty
   ; events = []
+  ; tick = 0
   }
 
-let harvest testnet =
-  ([], testnet)
+let harvestDHTRPC self id rpc =
+  let isDatagram e =
+    match e with
+    | DHTRPC.SendDatagram (j,n) -> true
+    | _ -> false
+  in
+  let txDatagram e =
+    match e with
+    | DHTRPC.SendDatagram (j,n) ->
+       let source = Map.find id self.idtonet in
+       let dest = (n.host,n.port) in
+       let body = Buffer.fromString (Serialize.stringify j) "utf-8" in
+       [ { source = source ; dest = dest ; body = body } ]
+    | _ -> []
+  in
+  let (events,rpc) = DHTRPC.harvest rpc in
+  let (datagrams,events) = List.partition isDatagram events in
+  ( events |> List.map (fun e -> (id,e))
+  , datagrams |> List.map txDatagram |> List.concat
+  , rpc
+  )
     
-let dhtOps qreply : DHTRPC.DHTOps<DHT.DHT> =
+let map f nid self =
+  { self with
+      testnet =
+        TestNet.map
+          (harvestDHTRPC self)
+          f
+          nid
+          self.testnet
+  }
+
+let dhtOps : DHTRPC.DHTOps<DHT.DHT> =
   { findnode = DHT._findnode
   ; query = DHT.query
   ; closest = DHT.closest
-  ; harvest = harvest
+  ; harvest = DHTRPC.harvestDHT
   ; tick = DHT.tick
   ; dhtId = fun dht -> dht.id
+  ; recv = DHT._onrequest
   }
+
+let tick self =
+  let self = { self with tick = self.tick + 1 } in
+  let self =
+    if self.tick % 16 = 1 then
+      { self with
+          testnet =
+            TestNet.mapall 
+              (harvestDHTRPC self)
+              (DHTRPC.tick dhtOps)
+              self.testnet
+      }
+    else
+      self
+  in
+  { self with
+      testnet =
+        TestNet.tick
+          (fun (host,port) body node ->
+            Map.tryFind (host,port) self.testnet.endpoints
+            |> optionThen
+                 (fun id ->
+                   let bodyStr = Buffer.toString "utf-8" body in
+                   bodyStr
+                   |> Serialize.parse
+                   |> optionMap
+                        (fun body ->
+                          ({ NodeIdent.id = Buffer.fromString id "binary"
+                           ; NodeIdent.host = host
+                           ; NodeIdent.port = port
+                           }
+                          , body
+                          )
+                        )
+                 )
+            |> optionMap
+                 (fun (source,body) ->
+                   DHTRPC.recv
+                     dhtOps
+                     body
+                     source
+                     node
+                 )
+            |> optionDefault node
+          )
+          (harvestDHTRPC self)
+          self.testnet
+  }
+
+let harvest self =
+  let (events, testnet) = TestNet.harvest self.testnet in
+  (events, { self with testnet = testnet })

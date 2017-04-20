@@ -15,7 +15,7 @@ type TestNet<'a,'o> =
   ; endpoints : Map<(string * int), string>
   ; delays : Map<((string * int) * (string * int)), int>
   ; nodes : Map<string, 'o>
-  ; events : 'a list
+  ; events : (string * 'a) list
   ; datagrams : Datagram list
   }
 
@@ -56,7 +56,7 @@ let map harvest f nid self =
   |> optionMap
        (fun n ->
          let updated = f n in
-         let (events,datagrams,node) = harvest updated in
+         let (events,datagrams,node) = harvest nid updated in
          { self with
              nodes =
                Map.add nid updated self.nodes ;
@@ -68,14 +68,20 @@ let map harvest f nid self =
   |> optionDefault self
                    
 let mapall harvest f self =
-  let newNodes =
+  let newNodesWithEvents =
     Map.toSeq self.nodes
-    |> Seq.map (fun (k,v) -> harvest (f v))
+    |> Seq.map (fun (k,v) -> (k,harvest k (f v)))
     |> Seq.toList
   in
-  let newNodes = newNodes |> List.map (fun (k,(e,d,v)) -> (k,v)) in
-  let newEvents = newNodes |> List.map (fun (k,(e,d,v)) -> e) in
-  let newDatagrams = newNodes |> List.map (fun (k,(e,d,v)) -> d) in
+  let (newEvents : 'a list) =
+    newNodesWithEvents |> List.map (fun (k,(e,d,v)) -> e) |> List.concat
+  in
+  let (newDatagrams : Datagram list) =
+    newNodesWithEvents |> List.map (fun (k,(e,d,v)) -> d) |> List.concat
+  in
+  let (newNodes : (string * 'o) list) =
+    newNodesWithEvents |> List.map (fun (k,(e,d,v)) -> (k,v))
+  in
   propDatagrams
     { self with
         nodes = Map.ofSeq newNodes ;
@@ -119,5 +125,5 @@ let tick sendFn harvest self =
     self
 
 let harvest self =
-  (List.rev self.events, { self with events = [] })
+  (self.events, { self with events = [] })
      

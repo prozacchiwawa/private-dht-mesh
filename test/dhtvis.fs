@@ -1,5 +1,8 @@
 module DHTVis
 
+open Buffer
+open KBucket
+
 let idPresentationString id =
   String.concat
     ""
@@ -8,10 +11,11 @@ let idPresentationString id =
        (Buffer.toArray id)
     )
     
-let rec formatter kb : string =
+let rec formatter (host : string option) (getId : 'a -> Buffer) (getHost : 'a -> string) (kb : KBucket.KBucket<Buffer,'a>) : string =
   String.concat
     ""
     ["<div class='bucket'>" ;
+     (host |> optionMap (fun host -> String.concat "" ["<div class='title'>" ; string kb.ver ; " " ; host ; "</div>"]) |> optionDefault "") ;
      (match kb.storage with
       | Self bucket ->
          String.concat
@@ -24,7 +28,9 @@ let rec formatter kb : string =
                    String.concat
                      ""
                      ["<div class='id'>" ;
-                      idPresentationString node.id ;
+                      idPresentationString (getId node) ;
+                      " " ;
+                      getHost node ;
                       "</div>"
                      ]
                  )
@@ -33,29 +39,28 @@ let rec formatter kb : string =
             "</div>"
            ]
       | Split (low,high) ->
-         String.concat "" ["<div class='split'><div class='left'>";formatter low;"</div><div class='right'>";formatter high;"</div></div>"]
+         String.concat
+           ""
+           ["<div class='split'><div class='left'>";
+            formatter None getId getHost low;
+            "</div><div class='right'>";
+            formatter None getId getHost high;
+            "</div></div>"
+           ]
      ) ;
      "</div>"
-    ]
+     ]
 
-let writeFile i allDhts =
-  let hid = Buffer.toString "binary" (DHT.hashId (string i)) in
+let writeFile getId getHost name kb =
+  let hid = Buffer.toString "binary" (DHT.hashId name) in
   ignore
     (QIO.writeText
-       (sprintf "%s.html" (idPresentationString (DHT.hashId (string i))))
+       (sprintf "%s.html" (idPresentationString (DHT.hashId name)))
        (String.concat
           ""
           ["<html><head><link rel='stylesheet' href='index.css'></link></head><body>" ;
-           (formatter (Map.find hid allDhts.dhts).nodes) ;
+           (formatter (Some name) getId getHost kb) ;
            "</body></html>"
           ]
        )
     )
-
-let writeFiles n allDhts =
-  for i = 0 to n do
-    begin
-      let _ = printfn "Writing %d" in
-      writeFile i
-    end
-      

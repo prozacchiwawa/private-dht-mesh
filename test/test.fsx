@@ -23,6 +23,7 @@
 #load "./kbuckettest.fs"
 #load "./testnet.fs"
 #load "./dhttest.fs"
+#load "./dhtvis.fs"
 #load "./simplefakedht.fs"
 #load "./testnetdht.fs"
 #load "./dhtrpctest.fs"

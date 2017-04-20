@@ -40,6 +40,7 @@ and KBucket<'id,'a> =
   { localNodeId : 'id
   ; dontSplit : bool
   ; storage : Storage<'id,'a>
+  ; ver : int
   }
 
 type KBucketAbstract<'id,'a> =
@@ -100,6 +101,7 @@ let init localNodeId =
   { localNodeId = localNodeId
   ; dontSplit = false
   ; storage = Self [||]
+  ; ver = 0
   }
 
 
@@ -199,10 +201,10 @@ let rec addInternal
         // delegate to the appropriate node for further processing
         *)
         intr.addInternal ops intr low contact (Some bitIndexPP) &+
-          (fun low -> { self with storage = Split (low,high) } &> [])
+          (fun low -> { self with storage = Split (low,high) ; ver = self.ver + 1 } &> [])
       else
         intr.addInternal ops intr high contact (Some bitIndexPP) &+
-          (fun high -> { self with storage = Split (low,high) } &> [])
+          (fun high -> { self with storage = Split (low,high) ; ver = self.ver + 1 } &> [])
   | Self bucket ->
      (* Check if the contact already exists *)
      let index = indexOf ops (ops.nodeId contact) self in
@@ -211,7 +213,7 @@ let rec addInternal
      else
        (* The bucket is full *)
        if Array.length bucket < Constants.DEFAULT_NUMBER_OF_NODES_PER_K_BUCKET then
-         { self with storage = Self (Array.append bucket [|contact|]) } &> []
+         { self with storage = Self (Array.append bucket [|contact|]) ; ver = self.ver + 1 } &> []
        else if self.dontSplit then
          (* we are not allowed to split the bucket
          // we need to ping the first constants.DEFAULT_NUMBER_OF_NODES_TO_PING
@@ -446,7 +448,8 @@ let update (ops : KBucketAbstract<'id,'a>) (self : KBucket<'id,'a>) (contact : '
          { self with
              storage =
                Self
-                 (Array.append (arrayRemove index 1 bucket) [|selection|])
+                 (Array.append (arrayRemove index 1 bucket) [|selection|]) ;
+             ver = self.ver + 1
          } &> []
      end
   | _ -> failwith "Expected bucket"

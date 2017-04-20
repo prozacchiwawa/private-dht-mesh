@@ -225,4 +225,5 @@ let dhtOps qreply : DHTRPC.DHTOps<FakeSystem> =
   ; harvest = harvest
   ; tick = fun inFlight system -> system
   ; dhtId = fun system -> (Map.find system.iam system.dhts).node.id
+  ; recv = fun inFlight body source system -> system
   }

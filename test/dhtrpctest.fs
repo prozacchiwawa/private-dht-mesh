@@ -10,74 +10,7 @@ open DHTRPC
 let (=>) (a : string) (b : 'b) : (string * 'b) = (a,b)
 
 let (tests : (string * ((unit -> unit) -> unit)) list) =
-  [ "closest?" =>
-      fun donef ->
-        let a = Buffer.fromArray [|0xaa;0x55|] in
-        let b = Buffer.fromArray [|0xaa;0x5a|] in
-        let c = Buffer.fromArray [|0xa5;0x55|] in
-        let nodes =
-          [|a;b;c|]
-          |> Array.map
-               (fun a ->
-                 { NodeIdent.id = a
-                 ; NodeIdent.host = Buffer.toString "binary" a
-                 ; NodeIdent.port = 0
-                 }
-               )
-        in
-        let sorted = DHTRPC.sortClosest b nodes in
-        let _ = massert.ok (sorted = [|nodes.[1];nodes.[0];nodes.[2]|]) in
-        donef ()
-  ; "distance?" =>
-      fun donef ->
-        let a = Buffer.fromArray [|0x55;0xaa|] in
-        let b = Buffer.fromArray [|0x56;0xff|] in
-        let dist = KBucket.defaultDistance SimpleFakeDHT.fakeKBucketOps a b in
-        let _ = massert.ok (dist = [|3;0x55|]) in
-        donef ()
-  ; "determineBucket" =>
-      fun donef ->
-        let a = Buffer.fromArray [|0x55;0xaa|] in
-        let which = [|-1;1;-1;1;-1;1;-1;1;1;-1;1;-1;1;-1;1;-1|] in
-        let determined =
-          Seq.map
-            (fun i ->
-              KBucket.determineBucket
-                SimpleFakeDHT.fakeKBucketOps
-                a
-                (Some i)
-            )
-            (Seq.init (Array.length which) id)
-          |> Array.ofSeq
-        in
-        let _ = massert.ok (determined = which) in
-        donef ()
-  ; "query sends a query to a target node" =>
-      fun donef ->
-        let q = ref false in
-        let gotQuery target query dht =
-          let _ = q := true in
-          Serialize.jsonObject [| |]
-        in
-        let ops = SimpleFakeDHT.dhtOps gotQuery in
-        let (rpc : DHTRPC.DHTWithQueryProcessing<SimpleFakeDHT.FakeSystem>) =
-          DHTRPC.init SimpleFakeDHT.allDhts
-        in
-        let targetIdStr = string 1 in
-        let target = DHT.hashId targetIdStr in
-        let query = Serialize.jsonObject [| |] in
-        let (initdq : DHTRPC.DHTWithQueryProcessing<SimpleFakeDHT.FakeSystem>) =
-          DHTRPC.directQuery ops target query rpc
-        in
-        let rdq =
-          Seq.fold
-            (fun rpc _ -> DHTRPC.tick ops rpc)
-            initdq
-            (Seq.init 16 id)
-        in
-        let _ = massert.ok !q in
-        donef ()
-  ; "We can make a query and receive a brief reply" =>
+  [ "We can make a query and receive a brief reply with the testnet" =>
       fun donef ->
         let gotQuery target query dht =
           query
@@ -97,43 +30,90 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
                (Serialize.jsonBool true)
           |> dump "response"
         in
-        let ops = SimpleFakeDHT.dhtOps gotQuery in
-        let (rpc : DHTRPC.DHTWithQueryProcessing<SimpleFakeDHT.FakeSystem>) =
-          DHTRPC.init SimpleFakeDHT.allDhts
-        in
-        let targetIdStr = string 1 in
+        let ops = TestNetDHT.dhtOps in
+        let testnet = TestNetDHT.init () in
+        let targetIdStr = TestNetDHT.hostname 1 in
         let target = DHT.hashId targetIdStr in
+        let sourceIdStr = TestNetDHT.hostname 0 in
+        let source = DHT.hashId sourceIdStr in
         let query = Serialize.jsonObject [| |] in
-        let (initdq : DHTRPC.DHTWithQueryProcessing<SimpleFakeDHT.FakeSystem>) =
-          DHTRPC.directQuery ops target query rpc
-        in
-        let (events,rdq) =
+        let (events,testnet) =
           Seq.fold
-            (fun (events,rpc) _ ->
-              let rpc = DHTRPC.tick ops rpc in
-              let (nevents,rpc) = DHTRPC.harvest rpc in
-              (nevents @ events, rpc) 
+            (fun ((events,testnet) : ((string * DHTRPC.DWQAction) list * TestNetDHT.TestSystem)) n ->
+              let _ =
+                if n = 100 then
+                  for i = 0 to 7 do
+                    begin
+                      let dhtrpc =
+                        Map.find
+                          (Buffer.toString
+                             "binary"
+                             (DHT.hashId (TestNetDHT.hostname i))
+                          )
+                          testnet.testnet.nodes
+                      in
+                      DHTVis.writeFile
+                        (fun (n : DHTData.Node) -> n.id)
+                        (fun (n : DHTData.Node) ->
+                          String.concat
+                            " "
+                            [string dhtrpc.dht._tick;n.host]
+                        )
+                        (TestNetDHT.hostname i)
+                        dhtrpc.dht.nodes
+                    end
+              in
+              let testnet =
+                if n = 100 then
+                  let txid = ShortId.generate () in
+                  TestNetDHT.map
+                    (DHTRPC.directQuery ops txid target query)
+                    (Buffer.toString "binary" source)
+                    testnet
+                else
+                  testnet
+              in
+              let testnet = TestNetDHT.tick testnet in
+              let (nevents,testnet) = TestNetDHT.harvest testnet in
+              let testnet =
+                Seq.fold
+                  (fun testnet evt ->
+                    match evt with
+                    | (who,QueryRequest (txid,peer,req)) ->
+                       let reply =
+                         Serialize.addField
+                           "reply"
+                           (Serialize.jsonBool true)
+                           req
+                       in
+                       TestNetDHT.map
+                         (DHTRPC.shortReply ops txid peer reply)
+                         (Buffer.toString "binary" target)
+                         testnet
+                    | _ -> testnet
+                  )
+                  testnet
+                  nevents
+              in
+              (nevents @ events, testnet)
             )
-            ([], initdq)
-            (Seq.init 16 id)
+            ([], testnet)
+            (Seq.init 500 id)
         in
         let response =
           List.fold
             (fun response evt ->
-              match evt with
-              | DHTRPC.QueryReply (id,target,resp) ->
-                 Serialize.field "response" resp
-                 |> optionMap Serialize.truthy
+              match (response,evt) with
+              | (_,(who,DHTRPC.QueryError e)) -> Some false
+              | (None,(who,DHTRPC.QueryReply (id,target,resp))) ->
+                 Serialize.field "reply" resp
+                 |> optionMap (Serialize.truthy >> Some)
                  |> optionDefault response
               | _ -> response
             )
-            false
+            None
             events
         in
-        let _ = massert.ok response in
-        donef ()
-  ; "We can make a query and receive a brief reply with the testnet" =>
-      fun donef ->
-        
+        let _ = massert.ok (response = Some true) in
         donef ()
   ]

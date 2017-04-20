@@ -69,7 +69,10 @@ let hashId id =
   let sha256Hasher = Crypto.createHash "sha256" in
   let _ = Crypto.updateBuffer (Buffer.fromString id "binary") sha256Hasher in
   Crypto.digestBuffer sha256Hasher
-    
+
+let randomFromId id =
+  hashId (Buffer.toString "binary" id)
+
 let init opts =
   let id = opts.id |> optionDefault (hashId (ShortId.generate ()))
   { id = id
@@ -91,10 +94,7 @@ let _bootstrap _addNode (self : DHT) =
     (fun self (node : NodeIdent) ->
       _addNode
         0
-        { NodeIdent.id = node.id
-        ; NodeIdent.host = node.host
-        ; NodeIdent.port = node.port
-        }
+        node
         self
     )
     self
@@ -321,15 +321,12 @@ let _reping
     self.nodes.add(newContact)
  *)
 
-let validateId id = Buffer.length id = 32
-
 let _onquery request (peer : NodeIdent) (self : DHT) : DHT =
   Serialize.field "target" request
   |> optionMap
        (fun (target : Serialize.Json) ->
          Buffer.fromString (Serialize.asString target) "binary"
        )
-  |> optionThen (fun target -> if validateId target then Some target else None)
   |> optionMap
        (fun (target : Buffer) ->
          { self with
@@ -360,17 +357,22 @@ let _onfindnode
        )
   |> optionMap
        (fun (target : Buffer) ->
-         if not (validateId target) then
-           self
-         else
-           let res =
-             Serialize.jsonObject
-               (Seq.concat
-                  [ [ ("command", Serialize.jsonString "_find_repl")
-                    ; ("rid", Serialize.jsonString rid)
-                    ; ("nodes",
-                       Serialize.jsonString
-                         (encodePeers
+         let id =
+           Serialize.field "id" request
+           |> optionMap
+                (fun b ->
+                  Buffer.fromString (Serialize.asString b) "binary"
+                )
+         in
+         let res =
+           Serialize.jsonObject
+             (Seq.concat
+                [ [ ("command", Serialize.jsonString "_find_repl")
+                  ; ("target", Serialize.jsonString (Buffer.toString "binary" target))
+                  ; ("rid", Serialize.jsonString rid)
+                  ; ("nodes",
+                     Serialize.jsonString
+                       (encodePeers
                             (KBucket.closest
                                kBucketOps
                                self.nodes
@@ -385,22 +387,27 @@ let _onfindnode
                                     }
                                   )
                             )
-                         )
-                      )
-                    ]
-                  ; (let qid =
-                       Serialize.field "qid" request
-                       |> optionMap Serialize.asString
-                     in
-                     match qid with
-                     | Some qid -> [("qid", Serialize.jsonString qid)]
-                     | None -> []
+                       )
                     )
                   ]
-                |> Array.ofSeq
-               )
-           in
-           { self with events = (Datagram (res, peer)) :: self.events }
+                ; (let qid =
+                     Serialize.field "qid" request
+                     |> optionMap Serialize.asString
+                   in
+                   match qid with
+                   | Some qid -> [("qid", Serialize.jsonString qid)]
+                   | None -> []
+                  )
+                ; (match id with
+                   | Some id ->
+                      [("id", Serialize.jsonString (Buffer.toString "binary" id))]
+                   | None -> []
+                  )
+                ]
+              |> Array.ofSeq
+             )
+         in
+         { self with events = (Datagram (res, peer)) :: self.events }
        )
   |> optionDefault self
 
@@ -515,7 +522,16 @@ let _onfindreply
     |> optionMap (fun s -> Buffer.fromString s "binary")
     |> optionDefault (Buffer.empty ())
   in
+  let id =
+    Serialize.field "id" request
+    |> optionMap Serialize.asString
+    |> optionMap (fun s -> Buffer.fromString s "binary")
+    |> optionDefault (Buffer.empty ())
+  in
   let peers = decodePeers nodeString in
+  let self =
+    { self with events = (FindNode (target, peers)) :: self.events }
+  in
   Array.fold
     (fun self peer ->
       _addNode
@@ -523,11 +539,7 @@ let _onfindreply
         peer
         self
     )
-    (_addNode
-       socketInFlight
-       peer
-       { self with events = (FindNode (target, peers)) :: self.events }
-    )
+    self
     peers
     
 let _onresponse
@@ -545,7 +557,7 @@ let _onresponse
     Map.toSeq self._pendingRequests
     |> Seq.filter (fun (id,r) -> r.launched + queryTimeout >= self._tick)
   in
-  let filtered =
+  let self =
     { self with
         _inFlightRequests = Map.remove rid self._inFlightRequests ;
         _pendingRequests = Map.ofSeq pendingSeq
@@ -561,25 +573,27 @@ let _onresponse
          ; NodeIdent.host = peer.host
          ; NodeIdent.port = peer.port
          }
-         filtered
+         self
     | Some "_find_repl" ->
-       _onfindreply
-         socketInFlight
-         response
-         { NodeIdent.id = peer.id
-         ; NodeIdent.host = peer.host
-         ; NodeIdent.port = peer.port
-         }
-         { filtered with
+       let self =
+         { self with
              _bootstrapped = true ;
-             events =
-               if filtered._bootstrapped then
-                 filtered.events
-               else
-                 Ready :: filtered.events
+             events = Ready :: self.events
          }
+       in
+       let self =
+         _onfindreply
+           socketInFlight
+           response
+           { NodeIdent.id = peer.id
+           ; NodeIdent.host = peer.host
+           ; NodeIdent.port = peer.port
+           }
+           self
+       in
+       self
     | _ ->
-       filtered
+       self
   in
   let newRequests =
     min 0 (updated.concurrency - updated._inFlightRequests.Count)
@@ -600,11 +614,10 @@ let _onresponse
 
 let _onrequest socketInFlight request (peer : NodeIdent) self =
   let self =
-    (_addNode
-       socketInFlight
-       peer
-       self
-    )
+    _addNode
+      socketInFlight
+      peer
+      self
   in
   let mt =
     (Serialize.field "rid" request |> optionMap Serialize.asString,
@@ -654,7 +667,7 @@ let closest n what self =
 let _findnode
       socketInFlight
       (qid : string)
-      (id : Buffer)
+      (target : Buffer)
       (toask : NodeIdent option)
       (self : DHT) : DHT =
   let toask =
@@ -665,7 +678,7 @@ let _findnode
          KBucket.closest
            kBucketOps
            self.nodes
-           id
+           target
            1
            None
        in
@@ -677,41 +690,53 @@ let _findnode
   match toask with
   | Some toask ->
      let q =
-       [| ("command", Serialize.jsonString "_find_node")
-        ; ("target", Serialize.jsonString (Buffer.toString "binary" id))
+       [| ("id", Serialize.jsonString (Buffer.toString "binary" self.id))
+        ; ("command", Serialize.jsonString "_find_node")
+        ; ("target", Serialize.jsonString (Buffer.toString "binary" target))
         ; ("qid", Serialize.jsonString qid)
        |]
        |> Serialize.jsonObject
      in
-     query socketInFlight toask (dump "q" q) self
+     query socketInFlight toask q self
   | None -> self
                    
 let tick socketInFlight self =
   let nextTick = self._tick + 1 in
-  let tself = { self with _tick = nextTick } in
-  let uself =
+  let self = { self with _tick = nextTick } in
+  let self =
     if self._bootstrapped then
-      tself
+      self
     else if Array.length self._bootstrap > 0 &&
               self._inFlightRequests.Count < self.concurrency
     then
+      let self =
+        _findnode
+          socketInFlight
+          (ShortId.generate ())
+          (randomFromId self.id)
+          None
+          self
+      in
       _findnode
         socketInFlight
         (ShortId.generate ())
         self.id
         None
-        tself
+        self
     else
-      tself
+      self
   in
   if nextTick &&& 7 = 0 then
-    _pingSome socketInFlight uself
+    _pingSome socketInFlight self
   else
-    uself
+    self
       
 let bootstrap =
   _bootstrap _addNode
 
+let harvest dht =
+  (List.rev dht.events, { dht with events = [] })
+             
 (*
 
 DHT.prototype.ping = function (peer, cb) {
