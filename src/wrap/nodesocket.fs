@@ -103,7 +103,7 @@ module dgram =
     let lastName = ref None in
     let lastAddr = ref None in
     let lookupType = if ty = "udp4" then 4 else 6 in
-    let socket = dgram_.createSocket ty in
+    let socket : dgram_.Socket = dgram_.createSocket ty in
 
     member self._startLookup str =
       Dns.lookup str lookupType
@@ -146,7 +146,7 @@ module dgram =
             log "with error" e |> ignore ;
             false
           end
-    member self.sendBuffer buf sendAddr =
+    member self.sendBuffer (buf : Buffer) (sendAddr : SendAddr) =
         try
           self._lookup sendAddr.address
           |> Q.map

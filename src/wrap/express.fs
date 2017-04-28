@@ -31,8 +31,8 @@ let post : string -> (Request -> Response -> Next -> unit) -> App -> App = fun e
 [<Emit("(function() { $2.close = $2.app.listen($0,$1); })()")>]
 let listen_ : int -> (unit -> unit) -> App -> unit = fun port cb app -> failwith "JS"
 
-let listen (n : int) (app : App) : Q.Promise<unit,unit> =
-  let f : Q.Future<unit,unit> = Q.defer () in
+let listen (n : int) (app : App) : Q.Promise<unit,string> =
+  let f : Q.Future<unit,string> = Q.defer () in
   let _ = app |> listen_ n (fun _ -> Q.resolve () f) in
   f.promise
 
