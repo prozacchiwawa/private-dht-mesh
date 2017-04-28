@@ -171,8 +171,6 @@ module datagram =
         socket.on "message"
           (System.Func<_,_,_>
             (fun msg rinfo ->
-              let _ = dump "message" msg in
-              let _ = dump "rinfo" rinfo in
               hdlr
                 { msg = msg
                 ; rinfo =
