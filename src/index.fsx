@@ -91,7 +91,7 @@ let main argv : unit =
         (key : string) : (Buffer * bacon.Observable<OutputEventDHT, unit>) =
     let macsStr = Buffer.toString "binary" (DHT.hashId (String.concat "|" macs)) in
     let dhtid = DHT.hashId (String.concat "|" [macsStr;key]) in
-    let _ = printfn "DHTID %s" (String.concat "" (Array.map (sprintf "%02x") (Buffer.toArray dhtid))) in
+    let _ = printfn "DHTID %s" (Buffer.toString "hex" dhtid) in
     let dhtkick =
       { DHT.defaultOpts with
           id = Some dhtid ;
@@ -267,7 +267,7 @@ let main argv : unit =
            in
            let nodeIdent =
              { NodeIdent.id =
-                 Buffer.fromString nodeId "binary"
+                 Buffer.fromString nodeId "hex"
              ; NodeIdent.host = nodeHost
              ; NodeIdent.port = nodePort
              }
