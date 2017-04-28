@@ -50,6 +50,8 @@ type InputEventDHT =
   | NoOp
   (* Tick timers *)
   | Tick
+  (* Start *)
+  | Start
   (* A datagram on the socket (incoming) *)
   | Datagram of UDPMessage
   (* Send a request to a foreign DHT *)
@@ -124,6 +126,8 @@ let main argv : unit =
           let newDhtrpc =
             match dump "inbus" v with
             | NoOp -> !dhtrpc
+            | Start ->
+               DHTRPC.map dhtOps DHT.bootstrap !dhtrpc
             | Tick ->
                DHTRPC.tick dhtOps !dhtrpc
             | Datagram msg ->
