@@ -168,5 +168,18 @@ module datagram =
     member self.onListening (hdlr : (unit -> unit)) =
         socket.on "listening" hdlr
     member self.onMessage (hdlr : (UDPMessage -> unit)) =
-        socket.on "message" (uncurriedFunction (fun msg rinfo -> hdlr { msg = msg; rinfo = { address = rinfo.address ; port = rinfo.port } }))
+        socket.on "message"
+          (System.Func<_,_,_>
+            (fun msg rinfo ->
+              let _ = dump "message" msg in
+              let _ = dump "rinfo" rinfo in
+              hdlr
+                { msg = msg
+                ; rinfo =
+                    { address = rinfo.address
+                    ; port = rinfo.port
+                    }
+                }
+            )
+          )
   let createSocket ty = new Socket(ty)
