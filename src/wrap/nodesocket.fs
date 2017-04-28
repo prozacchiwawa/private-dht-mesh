@@ -33,7 +33,7 @@ let net_module_ : unit -> NetModule = fun _ -> failwith "JS"
 
 let nm_ = net_module_ ()
 
-module net =
+module net__ =
   type Socket (sock_ : net_.Socket) =
     let socket = sock_ in
     member self.close () =
@@ -73,7 +73,7 @@ let createUnixServer addr er cb =
       nm_
       addr
       er
-      (fun c -> cb (new net.UnixServer(c)))
+      (fun c -> cb (new net__.UnixServer(c)))
   with _ ->
     ()
 
@@ -86,7 +86,7 @@ let connectUnixServer path er cb =
       nm_
       path
       er
-      (fun c -> cb (new net.Socket(c)))
+      (fun c -> cb (new net__.Socket(c)))
   with _ -> ()
 
 [<Import("*", "dgram")>]
@@ -98,7 +98,7 @@ module dgram_ =
     abstract on : string -> 'a -> unit
   let createSocket : string -> Socket = failwith "JS only"
 
-module dgram =
+module datagram =
   type Socket (ty : string) =
     let lastName = ref None in
     let lastAddr = ref None in

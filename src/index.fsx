@@ -78,22 +78,23 @@ let main args : unit =
   let key = getenv "KEY" |> optionDefault "" in
 
   (* Our socket *)
-  let udpsocket = dgram.Socket("udp4") in
+  let udpsocket = datagram.Socket("udp4") in
 
   (* Set up the DHT system as an autonomous actor in our system *)
   let runDHT
         (macs : string list)
         (inputBus : bacon.Observable<InputEventDHT, unit>)
-        (key : string) : bacon.Observable<OutputEventDHT, unit> =
+        (key : string) : (Buffer * bacon.Observable<OutputEventDHT, unit>) =
     let macsStr = Buffer.toString "binary" (DHT.hashId (String.concat "|" macs)) in
     let dhtid = DHT.hashId (String.concat "|" [macsStr;key]) in
+    let _ = printfn "DHTID %s" (String.concat "" (Array.map (sprintf "%02x") (Buffer.toArray dhtid))) in
     let dhtkick =
       { DHT.defaultOpts with
           id = Some dhtid ;
           bootstrap =
             Array.map
               (fun a ->
-                { NodeIdent.id = dhtid
+                { NodeIdent.id = DHT.hashId a
                 ; NodeIdent.host = a
                 ; NodeIdent.port = 3327
                 }
@@ -118,7 +119,7 @@ let main args : unit =
       inputBus.onValue
         (fun v ->
           let newDhtrpc =
-            match v with
+            match dump "inbus" v with
             | NoOp -> !dhtrpc
             | Tick ->
                DHTRPC.tick dhtOps !dhtrpc
@@ -180,7 +181,7 @@ let main args : unit =
           |> ignore
         )
     in
-    Bacon.busObservable resultBus
+    (dhtid, Bacon.busObservable resultBus)
 
   let bonjour = Bonjour.newBonjour () in
   let _ =
@@ -202,7 +203,10 @@ let main args : unit =
            |> Seq.map (fun i -> i.mac)
            |> List.ofSeq
          in
-         let outputBus = runDHT macs (Bacon.busObservable inputBus) key in
+         let ((dhtid,outputBus) :
+                (Buffer * bacon.Observable<OutputEventDHT,unit>)) =
+           runDHT macs (Bacon.busObservable inputBus) key
+         in
          let tickBus = Bacon.repeatedly 1000 [| Tick |] in
          let _ = inputBus.plug tickBus in
          let dgramBus = Bacon.newBus () in
@@ -216,7 +220,7 @@ let main args : unit =
          let _ =
            outputBus.onValue
              (fun v ->
-               match v with
+               match dump "outbus" v with
                | SendDatagram (body, nodeid) ->
                   udpsocket.sendString
                     (Serialize.stringify body)
@@ -227,10 +231,10 @@ let main args : unit =
                | _ -> ()
              )
          in
-         (requestBus, outputBus)
+         (dhtid, requestBus, outputBus)
        )
   |> Q.andThen
-       (fun ((requestBus, outputBus) : (bacon.Bus<InputEventDHT,unit> * bacon.Observable<OutputEventDHT,unit>)) ->
+       (fun ((dhtid, requestBus, outputBus) : (Buffer * bacon.Bus<InputEventDHT,unit> * bacon.Observable<OutputEventDHT,unit>)) ->
          let _ = printfn "Starting web server" in
          let doReply
                (requestBus : bacon.Bus<InputEventDHT,unit>)
@@ -389,11 +393,15 @@ let main args : unit =
                 outputBus.onValue (doOutputMsg ws)
               )
          |> Express.listen 3000
+         |> Q.map (fun app -> (dhtid, app))
        )
   |> Q.map
-       (fun app ->
+       (fun (dhtid,app) ->
+         let dhtidArray = Buffer.toArray dhtid in
+         let dhtidStr = String.concat "" (Array.map (sprintf "%02x") dhtidArray) in
+         let serviceName = String.concat "." ["com.euso.DHTRPC";dhtidStr] in
          bonjour.publish
-           (Bonjour.serviceDesc "com.euso.DHTRPC" "com.euso.DHTRPC" 3327) ;
+           (Bonjour.serviceDesc serviceName "com.euso.DHTRPC" 3327) ;
          Bonjour.find
            (Bonjour.serviceQueryByType "com.euso.DHTRPC")
            (printfn "Service %A")
