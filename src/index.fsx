@@ -145,7 +145,7 @@ let main argv : unit =
                       DHTRPC.recv
                         dhtOps
                         p
-                        { NodeIdent.id = Buffer.fromString id "binary"
+                        { NodeIdent.id = Buffer.fromString id "base64"
                         ; NodeIdent.host = msg.rinfo.address
                         ; NodeIdent.port = msg.rinfo.port
                         }
@@ -304,7 +304,7 @@ let main argv : unit =
                           ; Serialize.jsonObject
                               [| ("id",
                                   Serialize.jsonString
-                                    (Buffer.toString "binary" nid.id)
+                                    (Buffer.toString "base64" nid.id)
                                  )
                                ; ("host", Serialize.jsonString nid.host)
                                ; ("port", Serialize.jsonInt nid.port)
@@ -325,7 +325,7 @@ let main argv : unit =
                           ; Serialize.jsonObject
                               [| ("id",
                                   Serialize.jsonString
-                                    (Buffer.toString "binary" nid.id)
+                                    (Buffer.toString "base64" nid.id)
                                  )
                                ; ("host", Serialize.jsonString nid.host)
                                ; ("port", Serialize.jsonInt nid.port)
@@ -343,7 +343,7 @@ let main argv : unit =
                       (Serialize.jsonArray
                          [| Serialize.jsonString "ERROR"
                           ; Serialize.jsonString txid
-                          ; Serialize.jsonString (Buffer.toString "binary" id)
+                          ; Serialize.jsonString (Buffer.toString "base64" id)
                           ; Serialize.jsonString error
                          |]
                       )
@@ -362,7 +362,7 @@ let main argv : unit =
                     ( Serialize.asString arr.[1]
                     , Buffer.fromString
                         (Serialize.asString arr.[2])
-                        "binary"
+                        "hex"
                     , arr.[3]
                     )
                  )
@@ -380,9 +380,10 @@ let main argv : unit =
                  ws
          in
          let doWebSocketMsg ws msg =
+           let _ = printfn "Web Socket Msg %A" msg in
            (match msg with
             | WebSocket.String msg -> msg
-            | WebSocket.Buffer msg -> Buffer.toString "binary" msg
+            | WebSocket.Buffer msg -> Buffer.toString "utf-8" msg
            )
            |> Serialize.parse
            |> optionThen (Serialize.arrayMap id)
@@ -394,6 +395,7 @@ let main argv : unit =
          |> Express.ws
               "/v1/ep"
               (fun ws req ->
+                let _ = printfn "New Websocket Connection!" in
                 Express.wsOnMessage
                   (doWebSocketMsg ws)
                   ws ;

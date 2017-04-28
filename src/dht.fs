@@ -127,7 +127,7 @@ let _request
         request
         |> Serialize.addField
              "id"
-             (Serialize.jsonString (Buffer.toString "binary" peer.id))
+             (Serialize.jsonString (Buffer.toString "base64" peer.id))
     ; Request.launched = self._tick
     }
   in
@@ -365,7 +365,7 @@ let _onfindnode
            Serialize.field "id" request
            |> optionMap
                 (fun b ->
-                  Buffer.fromString (Serialize.asString b) "binary"
+                  Buffer.fromString (Serialize.asString b) "base64"
                 )
          in
          let res =
@@ -404,7 +404,7 @@ let _onfindnode
                   )
                 ; (match id with
                    | Some id ->
-                      [("id", Serialize.jsonString (Buffer.toString "binary" id))]
+                      [("id", Serialize.jsonString (Buffer.toString "base64" id))]
                    | None -> []
                   )
                 ]
@@ -529,7 +529,7 @@ let _onfindreply
   let id =
     Serialize.field "id" request
     |> optionMap Serialize.asString
-    |> optionMap (fun s -> Buffer.fromString s "binary")
+    |> optionMap (fun s -> Buffer.fromString s "base64")
     |> optionDefault (Buffer.empty ())
   in
   let peers = decodePeers nodeString in
@@ -694,7 +694,7 @@ let _findnode
   match toask with
   | Some toask ->
      let q =
-       [| ("id", Serialize.jsonString (Buffer.toString "binary" self.id))
+       [| ("id", Serialize.jsonString (Buffer.toString "base64" self.id))
         ; ("command", Serialize.jsonString "_find_node")
         ; ("target", Serialize.jsonString (Buffer.toString "binary" target))
         ; ("qid", Serialize.jsonString qid)
