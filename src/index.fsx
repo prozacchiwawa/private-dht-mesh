@@ -170,7 +170,7 @@ let main argv : unit =
             | Save v ->
                (resultBus.push (SaveComplete v) ; !dhtrpc)
           in
-          let (events, newDhtrpc) = DHTRPC.harvest !dhtrpc in
+          let (events, newDhtrpc) = DHTRPC.harvest newDhtrpc in
           let _ = dhtrpc := newDhtrpc in
           List.map
             (fun e ->
@@ -293,7 +293,7 @@ let main argv : unit =
                )
          in
          let doOutputMsg ws v =
-           match v with
+           match dump "doOutputMsg" v with
            | QueryPerform (txid, nid, body) ->
               Express.wsSend
                 (WebSocket.String
@@ -400,10 +400,10 @@ let main argv : unit =
                 outputBus.onValue (doOutputMsg ws)
               )
          |> Express.listen 3000
-         |> Q.map (fun app -> (dhtid, app))
+         |> Q.map (fun app -> (dhtid, requestBus, app))
        )
   |> Q.map
-       (fun (dhtid,app) ->
+       (fun (dhtid,requestBus,app) ->
          let dhtidArray = Buffer.toArray dhtid in
          let dhtidStr = String.concat "" (Array.map (sprintf "%02x") dhtidArray) in
          let serviceName = String.concat "." ["com.euso.DHTRPC";dhtidStr] in
@@ -412,7 +412,8 @@ let main argv : unit =
          Bonjour.find
            (Bonjour.serviceQueryByType "com.euso.DHTRPC")
            (printfn "Service %A")
-           bonjour
+           bonjour ;
+         requestBus.push Start
        )
   |> Q.errThen (fun e -> (dump "error" (toString e)) |> ignore ; Q.value ())
   |> Q.fin
