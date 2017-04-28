@@ -131,9 +131,10 @@ let main argv : unit =
             | Tick ->
                DHTRPC.tick dhtOps !dhtrpc
             | Datagram msg ->
-               msg.msg
-               |> Buffer.toString "utf-8"
+               (Buffer.toString "binary" msg.msg)
+               |> (fun txt -> printfn "raw %A" txt ; txt)
                |> Serialize.parse
+               |> optionMap (fun p -> printfn "datagram %A" p ; p)
                |> optionThen
                     (fun p ->
                       Serialize.field "id" p
@@ -141,15 +142,16 @@ let main argv : unit =
                     )
                |> optionMap (fun (p,id) -> (p,Serialize.asString id))
                |> optionMap
-                    (fun (p,id) ->
-                      DHTRPC.recv
-                        dhtOps
-                        p
-                        { NodeIdent.id = Buffer.fromString id "binary"
-                        ; NodeIdent.host = msg.rinfo.address
-                        ; NodeIdent.port = msg.rinfo.port
-                        }
-                        !dhtrpc
+                   (fun (p,id) ->
+                     let _ = printfn "recv from %s" id in
+                     DHTRPC.recv
+                       dhtOps
+                       p
+                       { NodeIdent.id = Buffer.fromString id "binary"
+                       ; NodeIdent.host = msg.rinfo.address
+                       ; NodeIdent.port = msg.rinfo.port
+                       }
+                       !dhtrpc
                     )
                |> optionDefault !dhtrpc
             | QueryStart (txid, id, body) ->
