@@ -206,7 +206,7 @@ let directQuery dhtOps txid tid query dwq =
   let qWithId =
     query
     |> Serialize.addField "txid" (Serialize.jsonString txid)
-    |> Serialize.addField "target" (Serialize.jsonString (Buffer.toString "binary" tid))
+    |> Serialize.addField "target" (Serialize.jsonString (Buffer.toString "base64" tid))
   in
   let currentClosest = dhtOps.closest 8 tid dwq.dht in
   let queryObject =
@@ -237,7 +237,7 @@ let shortReply
   let qWithId =
     reply
     |> Serialize.addField "rxid" (Serialize.jsonString txid)
-    |> Serialize.addField "target" (Serialize.jsonString (Buffer.toString "binary" from.id))
+    |> Serialize.addField "target" (Serialize.jsonString (Buffer.toString "base64" from.id))
   in
   let currentClosest = dhtOps.closest 8 from.id dwq.dht in
   let queryObject =
@@ -265,7 +265,7 @@ let _onresponse dhtOps (peer : NodeIdent) (resp : Serialize.Json) query dwq =
       Serialize.jsonObject
         [| ("ack", Serialize.jsonString query.id)
          ; ("target",
-            Serialize.jsonString (Buffer.toString "binary" query.tid))
+            Serialize.jsonString (Buffer.toString "base64" query.tid))
         |]
     in
     { dwq with dht = dhtOps.query 0 peer passOn dwq.dht }
@@ -541,7 +541,7 @@ let checkPartials dhtOps dwq =
            Serialize.jsonObject
              [| ("ack", Serialize.jsonString query.id)
               ; ("target",
-                 Serialize.jsonString (Buffer.toString "binary" query.tid))
+                 Serialize.jsonString (Buffer.toString "base64" query.tid))
               ; ("have",
                  Serialize.jsonString
                    (Buffer.toString
