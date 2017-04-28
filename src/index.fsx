@@ -73,12 +73,14 @@ type OutputEventDHT =
   (* Done with save operation *)
   | SaveComplete of string
              
-let main args : unit =
+let main argv : unit =
   (* Get key from the environment *)
   let key = getenv "KEY" |> optionDefault "" in
 
   (* Our socket *)
   let udpsocket = datagram.Socket("udp4") in
+
+  let args = argv |> Seq.skip 1 |> Array.ofSeq in
 
   (* Set up the DHT system as an autonomous actor in our system *)
   let runDHT
@@ -408,5 +410,5 @@ let main args : unit =
            (printfn "Service %A")
            bonjour
        )
-  |> Q.errThen (fun e -> dump "error" e |> ignore ; Q.value ())
+  |> Q.errThen (fun e -> (dump "error" (toString e)) |> ignore ; Q.value ())
   |> Q.fin
