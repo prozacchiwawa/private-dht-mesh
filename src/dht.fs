@@ -262,14 +262,14 @@ let encodePeers (peers : NodeIdent array) : string =
           ip6peers.[i].id 0 buffer
       end
   in
-  Buffer.toString "binary" buffer
+  Buffer.toString "base64" buffer
 
 (*
  * Decode encoded peers.
  *)
 let decodePeers (str : string) : NodeIdent array =
   try
-    let buf = Buffer.fromString str "binary" in
+    let buf = Buffer.fromString str "base64" in
     let l = Buffer.length buf in
     let numip4peers = Buffer.readUInt16BE 0 buf in
     let numip6peers = ((l - 2) - (numip4peers * 38)) / 18 in
