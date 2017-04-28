@@ -96,7 +96,7 @@ let main argv : unit =
           bootstrap =
             Array.map
               (fun a ->
-                let values = stringSplit "." a in
+                let values = stringSplit "@" a in
                 { NodeIdent.id = Buffer.fromString values.[0] "hex"
                 ; NodeIdent.host = values.[1]
                 ; NodeIdent.port = 3327
