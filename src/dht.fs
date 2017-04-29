@@ -158,7 +158,18 @@ let query
   _request
     socketInFlight
     qid
-    (Serialize.addField "qid" (Serialize.jsonString qid) query)
+    (query
+     |> (Serialize.addField
+           "id"
+           (Serialize.jsonString
+              (Buffer.toString "base64" self.id)
+           )
+        )
+     |> (Serialize.addField
+           "qid"
+           (Serialize.jsonString qid)
+        )
+    )
     toask
     true
     self

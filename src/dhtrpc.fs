@@ -206,7 +206,9 @@ let directQuery dhtOps txid tid query dwq =
   let qWithId =
     query
     |> Serialize.addField "txid" (Serialize.jsonString txid)
-    |> Serialize.addField "target" (Serialize.jsonString (Buffer.toString "base64" tid))
+    |> Serialize.addField
+         "target"
+         (Serialize.jsonString (Buffer.toString "base64" tid))
   in
   let currentClosest = dhtOps.getClosest 8 tid dwq.dht in
   let _ = ignore (dump "currentClosestQQQQ" currentClosest) in
