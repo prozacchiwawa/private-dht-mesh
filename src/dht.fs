@@ -354,7 +354,8 @@ let _onquery request (peer : NodeIdent) (self : DHT) : DHT =
 
 let _onping rid request (peer : NodeIdent) (self : DHT) : DHT =
   let res =
-    [| ("rid", Serialize.jsonString rid) ;
+    [| ("id", Serialize.jsonString (Buffer.toString "base64" self.id)) ;
+       ("rid", Serialize.jsonString rid) ;
        ("value", Serialize.jsonString (encodePeers [|peer|]))
     |]
     |> Serialize.jsonObject
