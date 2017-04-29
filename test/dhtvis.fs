@@ -15,7 +15,7 @@ let rec formatter (host : string option) (getId : 'a -> Buffer) (getHost : 'a ->
   String.concat
     ""
     ["<div class='bucket'>" ;
-     (host |> optionMap (fun host -> String.concat "" ["<div class='title'>" ; string kb.ver ; " " ; host ; "</div>"]) |> optionDefault "") ;
+     (host |> Option.map (fun host -> String.concat "" ["<div class='title'>" ; string kb.ver ; " " ; host ; "</div>"]) |> optionDefault "") ;
      (match kb.storage with
       | Self bucket ->
          String.concat

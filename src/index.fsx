@@ -134,14 +134,14 @@ let main argv : unit =
                (Buffer.toString "binary" msg.msg)
                |> (fun txt -> printfn "raw %A" txt ; txt)
                |> Serialize.parse
-               |> optionMap (fun p -> printfn "datagram %A" p ; p)
-               |> optionThen
+               |> Option.map (fun p -> printfn "datagram %A" p ; p)
+               |> Option.bind
                     (fun p ->
                       Serialize.field "id" p
-                      |> optionMap (fun id -> (p,id))
+                      |> Option.map (fun id -> (p,id))
                     )
-               |> optionMap (fun (p,id) -> (p,Serialize.asString id))
-               |> optionMap
+               |> Option.map (fun (p,id) -> (p,Serialize.asString id))
+               |> Option.map
                    (fun (p,id) ->
                      let _ = printfn "recv from %s" id in
                      DHTRPC.recv
@@ -251,19 +251,19 @@ let main argv : unit =
            let nodeId =
              arr.[2]
              |> Serialize.field "id"
-             |> optionMap Serialize.asString
+             |> Option.map Serialize.asString
              |> optionDefault ""
            in
            let nodeHost =
              arr.[2]
              |> Serialize.field "host"
-             |> optionMap Serialize.asString
+             |> Option.map Serialize.asString
              |> optionDefault ""
            in
            let nodePort =
              arr.[2]
              |> Serialize.field "port"
-             |> optionThen Serialize.asFloat
+             |> Option.bind Serialize.asFloat
              |> optionDefault 0.0
              |> int
            in
@@ -388,8 +388,8 @@ let main argv : unit =
             | WebSocket.Buffer msg -> Buffer.toString "utf-8" msg
            )
            |> Serialize.parse
-           |> optionThen (Serialize.arrayMap id)
-           |> optionMap (doWebSocketMsgInner ws)
+           |> Option.bind (Serialize.arrayMap id)
+           |> Option.map (doWebSocketMsgInner ws)
            |> optionDefault ()
          in
          let app = Express.newApp () in

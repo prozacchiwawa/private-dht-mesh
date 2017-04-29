@@ -84,30 +84,10 @@ let infinityInt_ : unit -> int = fun _ -> failwith "JS"
 let infinity = infinity_ ()
 let infinityInt = infinityInt_ ()
 
-let optionMap f o =
-  match o with
-  | Some a -> Some (f a)
-  | None -> None
-
-let optionFilter f o =
-  match o with
-  | Some a -> if f a then Some a else None
-  | None -> None
-
-let optionThen f o =
-  match o with
-  | Some a -> f a
-  | None -> None
-
 let optionElse f o =
   match o with
   | Some a -> Some a
   | None -> f ()
-
-let optionWhen pred o =
-  match o with
-  | Some o -> if (pred o) then Some o else None
-  | None -> None
 
 let optionEither a b o =
   match o with

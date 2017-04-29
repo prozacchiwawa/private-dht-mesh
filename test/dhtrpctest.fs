@@ -84,7 +84,7 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
               | (_,(who,DHTRPC.QueryError e)) -> Some false
               | (None,(who,DHTRPC.QueryReply (id,target,resp))) ->
                  Serialize.field "reply" resp
-                 |> optionMap (Serialize.truthy >> Some)
+                 |> Option.map (Serialize.truthy >> Some)
                  |> optionDefault response
               | _ -> response
             )

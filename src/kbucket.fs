@@ -56,24 +56,9 @@ type KBucketAbstract<'id,'a> =
 type Action<'id,'a> =
   | Ping of ('a array * 'a)
 
-let optionMap (f : 'a -> 'b) (o : 'a option) =
-  match o with
-  | None -> None
-  | Some v -> Some (f v)
-
-let optionThen (f : 'a -> 'b option) (o : 'a option) =
-  match o with
-  | None -> None
-  | Some v -> f v
-
 let optionDefault (d : 'a) (o : 'a option) =
   match o with
   | None -> d
-  | Some v -> v
-
-let optionDefLazy (f : unit -> 'a) (o : 'a option) =
-  match o with
-  | None -> f ()
   | Some v -> v
 
 let arrayRemove (at : int) (n : int) (a : 'a array) : 'a array =
@@ -103,7 +88,6 @@ let init localNodeId =
   ; storage = Self [||]
   ; ver = 0
   }
-
 
 (* Returns the index of the contact if it exists *)
 let indexOf ops id self =

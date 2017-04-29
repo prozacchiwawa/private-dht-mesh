@@ -53,7 +53,7 @@ let propDatagrams self =
 let map harvest f nid self =
   self.nodes
   |> Map.tryFind nid
-  |> optionMap
+  |> Option.map
        (fun n ->
          let updated = f n in
          let (events,datagrams,node) = harvest nid updated in
@@ -99,11 +99,11 @@ let tick sendFn harvest self =
       (fun self datagram ->
         self.endpoints
         |> Map.tryFind datagram.dest
-        |> optionThen
+        |> Option.bind
              (fun nid ->
-               Map.tryFind nid self.nodes |> optionMap (fun node -> (nid,node))
+               Map.tryFind nid self.nodes |> Option.map (fun node -> (nid,node))
              )
-        |> optionMap
+        |> Option.map
              (fun (nid,node) ->
                let unode = sendFn datagram.source datagram.body node in
                let (events,datagrams,node) = harvest nid unode in

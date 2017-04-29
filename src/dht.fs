@@ -327,11 +327,11 @@ let _reping
 
 let _onquery request (peer : NodeIdent) (self : DHT) : DHT =
   Serialize.field "target" request
-  |> optionMap
+  |> Option.map
        (fun (target : Serialize.Json) ->
          Buffer.fromString (Serialize.asString target) "base64"
        )
-  |> optionMap
+  |> Option.map
        (fun (target : Buffer) ->
          { self with
              events =
@@ -355,15 +355,15 @@ let _onfindnode
       (peer : NodeIdent)
       (self : DHT) : DHT =
   Serialize.field "target" request
-  |> optionMap
+  |> Option.map
        (fun (target : Serialize.Json) ->
          Buffer.fromString (Serialize.asString target) "base64"
        )
-  |> optionMap
+  |> Option.map
        (fun (target : Buffer) ->
          let id =
            Serialize.field "id" request
-           |> optionMap
+           |> Option.map
                 (fun b ->
                   Buffer.fromString (Serialize.asString b) "base64"
                 )
@@ -396,7 +396,7 @@ let _onfindnode
                   ]
                 ; (let qid =
                      Serialize.field "qid" request
-                     |> optionMap Serialize.asString
+                     |> Option.map Serialize.asString
                    in
                    match qid with
                    | Some qid -> [("qid", Serialize.jsonString qid)]
@@ -517,19 +517,19 @@ let _onfindreply
       (self : DHT) : DHT =
   let nodeString =
     Serialize.field "nodes" request
-    |> optionMap Serialize.asString
+    |> Option.map Serialize.asString
     |> optionDefault "\0\0"
   in
   let target =
     Serialize.field "target" request
-    |> optionMap Serialize.asString
-    |> optionMap (fun s -> Buffer.fromString s "base64")
+    |> Option.map Serialize.asString
+    |> Option.map (fun s -> Buffer.fromString s "base64")
     |> optionDefault (Buffer.empty ())
   in
   let id =
     Serialize.field "id" request
-    |> optionMap Serialize.asString
-    |> optionMap (fun s -> Buffer.fromString s "base64")
+    |> Option.map Serialize.asString
+    |> Option.map (fun s -> Buffer.fromString s "base64")
     |> optionDefault (Buffer.empty ())
   in
   let peers = decodePeers nodeString in
@@ -554,7 +554,7 @@ let _onresponse
       (self : DHT) : DHT =
   let nodeString =
     Serialize.field "nodes" response
-    |> optionMap Serialize.asString
+    |> Option.map Serialize.asString
     |> optionDefault "\0\0"
   in
   let pendingSeq =
@@ -568,7 +568,7 @@ let _onresponse
     }
   in
   let (updated : DHT) =
-    match Serialize.field "command" response |> optionMap Serialize.asString with
+    match Serialize.field "command" response |> Option.map Serialize.asString with
     | Some "_pong" ->
        _onpong
          socketInFlight
@@ -624,9 +624,9 @@ let _onrequest socketInFlight request (peer : NodeIdent) self =
       self
   in
   let mt =
-    (Serialize.field "rid" request |> optionMap Serialize.asString,
-     Serialize.field "qid" request |> optionMap Serialize.asString,
-     Serialize.field "command" request |> optionMap Serialize.asString
+    (Serialize.field "rid" request |> Option.map Serialize.asString,
+     Serialize.field "qid" request |> Option.map Serialize.asString,
+     Serialize.field "command" request |> Option.map Serialize.asString
     )
   in
   match mt with

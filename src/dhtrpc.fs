@@ -159,7 +159,7 @@ let startQuery dhtOps (query : Query) dwq =
   let removeId = Buffer.toString "binary" query.tid in
   let askMatch =
     toask
-    |> optionMap (fun t -> (Buffer.equal t.id query.tid, toask))
+    |> Option.map (fun t -> (Buffer.equal t.id query.tid, toask))
     |> optionDefault (false, None)
   in
   match askMatch with
@@ -279,16 +279,16 @@ let _onresponse dhtOps (peer : NodeIdent) (resp : Serialize.Json) query dwq =
 
 let takeDatagram dhtOps (peer : NodeIdent) (resp : Serialize.Json) dwq =
   let (txid,rxid,ack) =
-    (Serialize.field "txid" resp |> optionMap Serialize.asString
-    ,Serialize.field "rxid" resp |> optionMap Serialize.asString
-    ,Serialize.field "ack" resp |> optionMap Serialize.asString
+    (Serialize.field "txid" resp |> Option.map Serialize.asString
+    ,Serialize.field "rxid" resp |> Option.map Serialize.asString
+    ,Serialize.field "ack" resp |> Option.map Serialize.asString
     )
   in
   match (txid,rxid,ack) with
   | (_,_,Some ack) ->
      (* Ack *)
      Map.tryFind ack dwq.activeQueries
-     |> optionMap
+     |> Option.map
           (fun query ->
             { dwq with
                 activeQueries = Map.remove query.id dwq.activeQueries
@@ -298,14 +298,14 @@ let takeDatagram dhtOps (peer : NodeIdent) (resp : Serialize.Json) dwq =
   | (_,Some rxid,_) ->
      (* Response to existing request *)
      Map.tryFind rxid dwq.activeQueries
-     |> optionMap
+     |> Option.map
           (fun query ->
             let mt =
-              (Serialize.field "_p" resp |> optionThen Serialize.floor
-              ,Serialize.field "_n" resp |> optionThen Serialize.floor
+              (Serialize.field "_p" resp |> Option.bind Serialize.floor
+              ,Serialize.field "_n" resp |> Option.bind Serialize.floor
               ,Serialize.field "_b" resp
-               |> optionMap Serialize.asString
-               |> optionMap (fun b -> Buffer.fromString b "binary")
+               |> Option.map Serialize.asString
+               |> Option.map (fun b -> Buffer.fromString b "binary")
               )
             in
             match mt with
@@ -340,7 +340,7 @@ let takeDatagram dhtOps (peer : NodeIdent) (resp : Serialize.Json) dwq =
                  copyAllInto 0 targetBuf bufs
                  |> Buffer.toString "utf-8"
                  |> Serialize.parse
-                 |> optionMap
+                 |> Option.map
                       (fun resp -> _onresponse dhtOps peer resp query dwq)
                  |> optionDefault
                       { dwq with
@@ -395,7 +395,7 @@ let takeFind dhtOps id peers (q : Query) dwq =
   let toComparable (n : NodeIdent) =
     (Buffer.toString "binary" n.id, n.host, n.port)
   in
-  let qClosest = Set.ofSeq (Array.map toComparable q.closest) in
+  let qClosest = Set.ofSeq (Array.map toComparable (dump "q" q).closest) in
   let incoming = Set.ofSeq (Array.map toComparable peers) in
   let total = Set.union qClosest incoming in
   if total.Count = qClosest.Count then
@@ -426,7 +426,7 @@ let takeFind dhtOps id peers (q : Query) dwq =
     in
     startQuery
       dhtOps
-      { q with closest = Array.sub closestWithDistances 0 8 }
+      (dump "qq" { q with closest = Array.sub closestWithDistances 0 8 })
       { dwq with
           drilling = Map.remove (Buffer.toString "binary" q.tid) dwq.drilling
       }

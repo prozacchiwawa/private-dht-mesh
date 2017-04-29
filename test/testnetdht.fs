@@ -139,12 +139,12 @@ let tick self =
         TestNet.tick
           (fun (host,port) body node ->
             Map.tryFind (host,port) self.testnet.endpoints
-            |> optionThen
+            |> Option.bind
                  (fun id ->
                    let bodyStr = Buffer.toString "utf-8" body in
                    bodyStr
                    |> Serialize.parse
-                   |> optionMap
+                   |> Option.map
                         (fun body ->
                           ({ NodeIdent.id = Buffer.fromString id "binary"
                            ; NodeIdent.host = host
@@ -154,7 +154,7 @@ let tick self =
                           )
                         )
                  )
-            |> optionMap
+            |> Option.map
                  (fun (source,body) ->
                    DHTRPC.recv
                      dhtOps

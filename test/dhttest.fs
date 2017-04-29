@@ -40,7 +40,7 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
           let getIdFromRequest b =
             let ids =
               Serialize.field "id" b
-              |> optionMap Serialize.asString
+              |> Option.map Serialize.asString
               |> optionDefault ""
             in
             Buffer.fromString ids "binary"
@@ -48,7 +48,7 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
           match l with
           | DHT.Datagram (b,_) ->
              let id = getIdFromRequest b in
-             match Serialize.field "rid" b |> optionMap Serialize.asString with
+             match Serialize.field "rid" b |> Option.map Serialize.asString with
              | Some rid ->
                 DHT._onresponse 0 rid b { id = id ; host = host ; port = port } d
              | None ->

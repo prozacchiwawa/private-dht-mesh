@@ -382,7 +382,7 @@ let tests =
         kbadd kb pings { newContactBuffer finalContactId with foo = "me" } ;
         massert.ok
           (((KBucket.get kbOps !kb finalContactId None)
-            |> KBucket.optionMap (fun ctc -> ctc.foo)) = Some "me") ;
+            |> Option.map (fun ctc -> ctc.foo)) = Some "me") ;
         donef ()
 
   ; "indexOf returns a contact with id that contains the same byte sequence as the test contact" =>
