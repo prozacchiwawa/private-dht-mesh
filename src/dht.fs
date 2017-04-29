@@ -177,6 +177,7 @@ let query
 let makePingBody qid (self : DHT) =
   Serialize.jsonObject
     [| ("command", Serialize.jsonString "_ping") ;
+       ("id", Serialize.jsonString (Buffer.toString "base64" self.id)) ;
        ("qid", Serialize.jsonString qid)
     |]
 
