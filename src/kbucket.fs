@@ -55,7 +55,7 @@ type KBucketAbstract<'id,'a> =
 
 type Action<'id,'a> =
   | Ping of ('a array * 'a)
-
+  
 let optionDefault (d : 'a) (o : 'a option) =
   match o with
   | None -> d

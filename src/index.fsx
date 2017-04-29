@@ -111,7 +111,7 @@ let main argv : unit =
     let dhtOps : DHTRPC.DHTOps<DHT.DHT> =
       { findnode = DHT._findnode
       ; query = DHT.query
-      ; closest = DHT.closest
+      ; getClosest = DHT.closest
       ; harvest = DHTRPC.harvestDHT
       ; tick = DHT.tick
       ; dhtId = fun dht -> dht.id
@@ -155,10 +155,9 @@ let main argv : unit =
                     )
                |> optionDefault !dhtrpc
             | QueryStart (txid, id, body) ->
-               let shortId = String.concat "|" [txid;ShortId.generate ()] in
                DHTRPC.directQuery
                  dhtOps
-                 shortId
+                 txid
                  id
                  body
                  !dhtrpc
@@ -294,64 +293,57 @@ let main argv : unit =
                   )
                )
          in
-         let doOutputMsg ws v =
+         let wsSend (wss : Map<string,Express.WebSocket>) (m : Serialize.Json) :
+               unit =
+           wss
+           |> Map.iter
+                (fun wsid ws ->
+                  Express.wsSend (WebSocket.String (Serialize.stringify m)) ws
+                )
+         in
+         let doOutputMsg wsSend v =
            match dump "doOutputMsg" v with
            | QueryPerform (txid, nid, body) ->
-              Express.wsSend
-                (WebSocket.String
-                   (Serialize.stringify
-                      (Serialize.jsonArray
-                         [| Serialize.jsonString "REQUEST"
-                          ; Serialize.jsonString txid
-                          ; Serialize.jsonObject
-                              [| ("id",
-                                  Serialize.jsonString
-                                    (Buffer.toString "base64" nid.id)
-                                 )
-                               ; ("host", Serialize.jsonString nid.host)
-                               ; ("port", Serialize.jsonInt nid.port)
-                              |]
-                          ; body
-                         |]
-                      )
-                   )
+              wsSend
+                (Serialize.jsonArray
+                   [| Serialize.jsonString "REQUEST"
+                    ; Serialize.jsonString txid
+                    ; Serialize.jsonObject
+                        [| ("id",
+                            Serialize.jsonString
+                              (Buffer.toString "base64" nid.id)
+                           )
+                         ; ("host", Serialize.jsonString nid.host)
+                         ; ("port", Serialize.jsonInt nid.port)
+                        |]
+                    ; body
+                   |]
                 )
-                ws
            | QueryComplete (txid, nid, body) ->
-              Express.wsSend
-                (WebSocket.String
-                   (Serialize.stringify
-                      (Serialize.jsonArray
-                         [| Serialize.jsonString "COMPLETE"
-                          ; Serialize.jsonString txid
-                          ; Serialize.jsonObject
-                              [| ("id",
-                                  Serialize.jsonString
-                                    (Buffer.toString "base64" nid.id)
-                                 )
-                               ; ("host", Serialize.jsonString nid.host)
-                               ; ("port", Serialize.jsonInt nid.port)
-                              |]
-                          ; body
-                         |]
-                      )
-                   )
+              wsSend
+                (Serialize.jsonArray
+                   [| Serialize.jsonString "COMPLETE"
+                    ; Serialize.jsonString txid
+                    ; Serialize.jsonObject
+                        [| ("id",
+                            Serialize.jsonString
+                              (Buffer.toString "base64" nid.id)
+                           )
+                         ; ("host", Serialize.jsonString nid.host)
+                         ; ("port", Serialize.jsonInt nid.port)
+                        |]
+                    ; body
+                   |]
                 )
-                ws
            | QueryError (txid, id, error) ->
-              Express.wsSend
-                (WebSocket.String
-                   (Serialize.stringify
-                      (Serialize.jsonArray
-                         [| Serialize.jsonString "ERROR"
-                          ; Serialize.jsonString txid
-                          ; Serialize.jsonString (Buffer.toString "base64" id)
-                          ; Serialize.jsonString error
-                         |]
-                      )
-                   )
+              wsSend
+                (Serialize.jsonArray
+                   [| Serialize.jsonString "ERROR"
+                    ; Serialize.jsonString txid
+                    ; Serialize.jsonString (Buffer.toString "base64" id)
+                    ; Serialize.jsonString error
+                   |]
                 )
-                ws
            | _ -> ()
          in
          let doWebSocketMsgInner ws arr =
@@ -393,15 +385,23 @@ let main argv : unit =
            |> optionDefault ()
          in
          let app = Express.newApp () in
+         let (allSockets : Map<string,Express.WebSocket> ref) = ref Map.empty in
+         let _ =
+           outputBus.onValue (doOutputMsg (fun m -> wsSend !allSockets m))
+         in
          app
          |> Express.ws
               "/v1/ep"
               (fun ws req ->
                 let _ = printfn "New Websocket Connection!" in
+                let wsid = ShortId.generate () in
+                allSockets := Map.add wsid ws !allSockets ;
                 Express.wsOnMessage
                   (doWebSocketMsg ws)
                   ws ;
-                outputBus.onValue (doOutputMsg ws)
+                Express.wsOnClose
+                  (fun _ -> allSockets := Map.remove wsid !allSockets)
+                  ws
               )
          |> Express.listen 3000
          |> Q.map (fun app -> (dhtid, requestBus, app))

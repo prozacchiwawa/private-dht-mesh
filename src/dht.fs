@@ -660,12 +660,14 @@ let _onrequest socketInFlight request (peer : NodeIdent) self =
        self
 
 let closest n what self =
+  let _ = printfn "DHT.closest %A %A" n what in
   KBucket.closest
     kBucketOps
     self.nodes
     what
     n
     None
+  |> dump "DHTClosest"
   |> Array.map identOfNode
     
 let _findnode
