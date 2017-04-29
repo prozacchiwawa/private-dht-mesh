@@ -304,21 +304,24 @@ let main argv : unit =
          let doOutputMsg wsSend v =
            match dump "doOutputMsg" v with
            | QueryPerform (txid, nid, body) ->
-              wsSend
-                (Serialize.jsonArray
-                   [| Serialize.jsonString "REQUEST"
-                    ; Serialize.jsonString txid
-                    ; Serialize.jsonObject
-                        [| ("id",
-                            Serialize.jsonString
-                              (Buffer.toString "base64" nid.id)
-                           )
-                         ; ("host", Serialize.jsonString nid.host)
-                         ; ("port", Serialize.jsonInt nid.port)
-                        |]
-                    ; body
-                   |]
-                )
+              if txid = "test" then
+                requestBus.push (QueryReply (txid,nid,body))
+              else
+                wsSend
+                  (Serialize.jsonArray
+                     [| Serialize.jsonString "REQUEST"
+                     ; Serialize.jsonString txid
+                     ; Serialize.jsonObject
+                       [| ("id",
+                           Serialize.jsonString
+                             (Buffer.toString "base64" nid.id)
+                        )
+                       ; ("host", Serialize.jsonString nid.host)
+                       ; ("port", Serialize.jsonInt nid.port)
+                       |]
+                     ; body
+                     |]
+                  )
            | QueryComplete (txid, nid, body) ->
               wsSend
                 (Serialize.jsonArray
