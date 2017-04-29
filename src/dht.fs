@@ -352,13 +352,20 @@ let _onquery request (peer : NodeIdent) (self : DHT) : DHT =
        )
   |> optionDefault self
 
-let _onping rid request (peer : NodeIdent) (self : DHT) : DHT =
+let _onping socketInFlight _addNode rid request (peer : NodeIdent) (self : DHT) : DHT =
   let res =
     [| ("id", Serialize.jsonString (Buffer.toString "base64" self.id)) ;
        ("rid", Serialize.jsonString rid) ;
-       ("value", Serialize.jsonString (encodePeers [|peer|]))
+       ("value", Serialize.jsonString (encodePeers [|peer|])) ;
+       ("command", Serialize.jsonString "_pong")
     |]
     |> Serialize.jsonObject
+  in
+  let self =
+      _addNode
+        socketInFlight
+        peer
+        self
   in
   { self with events = (Datagram (res, peer)) :: self.events }
 
@@ -647,6 +654,8 @@ let _onrequest socketInFlight request (peer : NodeIdent) self =
      _onresponse socketInFlight rid request peer self
   | (_, Some qid, Some "_ping") ->
      _onping
+       socketInFlight
+       _addNode
        qid
        request
        { NodeIdent.id = peer.id
