@@ -211,7 +211,6 @@ let directQuery dhtOps txid tid query dwq =
          (Serialize.jsonString (Buffer.toString "base64" tid))
   in
   let currentClosest = dhtOps.getClosest 8 tid dwq.dht in
-  let _ = ignore (dump "currentClosestQQQQ" currentClosest) in
   let queryObject =
     { id = txid
     ; tid = tid
@@ -224,7 +223,6 @@ let directQuery dhtOps txid tid query dwq =
     ; pieces = 0
     }
   in
-  let _ = ignore (dump "qqqq" queryObject.closestNodes) in
   if dwq.activeQueries.Count + 1 >= dwq.maxParallel || not dwq.bootstrapped then
     { dwq with
         pendingQueries = queryObject :: dwq.pendingQueries
@@ -399,7 +397,7 @@ let takeFind dhtOps id peers (q : Query) dwq =
   let toComparable (n : NodeIdent) =
     (Buffer.toString "binary" n.id, n.host, n.port)
   in
-  let qClosest = Set.ofSeq (Array.map toComparable (dump "q" q).closestNodes) in
+  let qClosest = Set.ofSeq (Array.map toComparable q.closestNodes) in
   let incoming = Set.ofSeq (Array.map toComparable peers) in
   let total = Set.union qClosest incoming in
   if total.Count = qClosest.Count then
@@ -431,7 +429,7 @@ let takeFind dhtOps id peers (q : Query) dwq =
     in
     startQuery
       dhtOps
-      (dump "qq" { q with closestNodes = Array.sub closestWithDistances 0 8 })
+      { q with closestNodes = Array.sub closestWithDistances 0 8 }
       { dwq with
           drilling = Map.remove (Buffer.toString "binary" q.tid) dwq.drilling
       }
@@ -575,7 +573,7 @@ let doTimeouts dhtOps (dwq : DHTWithQueryProcessing<'dht>) =
       | Some qq ->
          let (q : Query) =
            match qq.retry with
-           | hd :: tl -> dump "qqq" { qq with retry = tl }
+           | hd :: tl -> { qq with retry = tl }
            | [] -> qq
          in
          startQuery dhtOps q dwq
