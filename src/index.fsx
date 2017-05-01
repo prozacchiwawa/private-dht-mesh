@@ -58,6 +58,8 @@ type InputEventDHT =
   | QueryStart of (string * Buffer * Serialize.Json)
   (* Send a reply corresponding to a request *)
   | QueryReply of (string * NodeIdent * Serialize.Json)
+  (* Add a node from an external source *)
+  | AddNode of NodeIdent
   (* Write out the state *)
   | Save of string
      
@@ -117,6 +119,7 @@ let main argv : unit =
       ; dhtId = fun dht -> dht.id
       ; recv = DHT._onrequest
       ; cancel = DHT._cancelRequest
+      ; addNode = DHT._addNode
       }
     in
     let dhtrpc = ref (DHTRPC.init dht) in
@@ -170,7 +173,9 @@ let main argv : unit =
                  body
                  !dhtrpc
             | Save v ->
+               (* XXX Reminder -- implement me *)
                (resultBus.push (SaveComplete v) ; !dhtrpc)
+            | AddNode nid -> DHTRPC.addNode dhtOps nid !dhtrpc
           in
           let (events, newDhtrpc) = DHTRPC.harvest newDhtrpc in
           let _ = dhtrpc := newDhtrpc in
@@ -419,7 +424,31 @@ let main argv : unit =
            (Bonjour.serviceDesc serviceName "com.euso.DHTRPC" 3327) ;
          Bonjour.find
            (Bonjour.serviceQueryByType "com.euso.DHTRPC")
-           (printfn "Service %A")
+           (fun service ->
+             let host =
+               (match service.addresses |> List.ofSeq with
+                | hd :: _ -> hd
+                | [] -> service.fqdn
+               )
+             in
+             let port = 3327 in
+             let fqdn = stringSplit "." service.fqdn in
+             if Array.length fqdn > 3 &&
+                  fqdn.[0] = "com" &&
+                    fqdn.[1] = "euso" &&
+                      fqdn.[2] = "DHTRPC"
+             then
+               let idStr = fqdn.[3] in
+               let _ = printfn "fqdn %s from %A" idStr fqdn in
+               let id = Buffer.fromString idStr "hex" in
+               requestBus.push
+                 (AddNode
+                    { NodeIdent.id = id
+                    ; NodeIdent.host = host
+                    ; NodeIdent.port = port
+                    }
+                 )
+           )
            bonjour ;
          requestBus.push Start
        )

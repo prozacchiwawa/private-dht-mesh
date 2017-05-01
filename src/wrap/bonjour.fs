@@ -32,7 +32,8 @@ type ServiceReferer =
   }
 
 type ServiceEntry =
-  { name : string
+  { addresses : string array
+  ; name : string
   ; fqdn : string
   ; host : string
   ; referer : ServiceReferer

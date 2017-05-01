@@ -119,6 +119,7 @@ let dhtOps : DHTRPC.DHTOps<DHT.DHT> =
   ; dhtId = fun dht -> dht.id
   ; recv = DHT._onrequest
   ; cancel = DHT._cancelRequest
+  ; addNode = DHT._addNode
   }
 
 let tick self =

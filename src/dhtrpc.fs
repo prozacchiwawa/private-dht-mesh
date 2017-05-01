@@ -94,6 +94,8 @@ and DHTOps<'dht> =
     recv : int -> Serialize.Json -> NodeIdent -> 'dht -> 'dht
   ; (* Cancel a request *)
     cancel : string -> 'dht -> 'dht
+  ; (* Add a node *)
+    addNode : int -> NodeIdent -> 'dht -> 'dht
   }
 
 let queryRetries = [2;4;7;15]
@@ -386,7 +388,6 @@ let takeDatagram dhtOps (peer : NodeIdent) (resp : Serialize.Json) dwq =
      }
   | _ -> dwq
     
-
 let (kBucketOps : KBucketAbstract<Buffer,Node>) =
   { distance = KBucket.defaultDistance
   ; nodeId = fun n -> n.id
@@ -522,15 +523,21 @@ let map dhtOps f dwq =
 let recv dhtOps (json : Serialize.Json) (source : NodeIdent) dwq =
   map
     dhtOps
-    (fun dht ->
-      dhtOps.recv
-        (dwq.drilling.Count + dwq.activeQueries.Count)
-        json
-        source
-        dht
+    (dhtOps.recv
+       (dwq.drilling.Count + dwq.activeQueries.Count)
+       json
+       source
     )
     dwq
 
+let addNode dhtOps nid dwq =
+  map
+    dhtOps
+    (dhtOps.addNode
+       (dwq.drilling.Count + dwq.activeQueries.Count)
+       nid)
+    dwq
+  
 let expireQuery dhtOps txid tid dwq =
   let events =
     match Map.tryFind txid dwq.activeQueries with
