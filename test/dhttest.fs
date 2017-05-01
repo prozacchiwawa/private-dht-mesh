@@ -43,7 +43,7 @@ let (tests : (string * ((unit -> unit) -> unit)) list) =
               |> Option.map Serialize.asString
               |> optionDefault ""
             in
-            Buffer.fromString ids "binary"
+            Buffer.fromString ids "base64"
           in
           match l with
           | DHT.Datagram (b,_) ->

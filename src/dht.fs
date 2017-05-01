@@ -114,6 +114,14 @@ let (kBucketOps : KBucket.KBucketAbstract<Buffer,Node>) =
   ; idLess = fun a b -> Buffer.compare a b < 0
   }
 
+let _cancelRequest
+      (qid : string)
+      (self : DHT) : DHT =
+  { self with
+      _pendingRequests = Map.remove qid self._pendingRequests ;
+      _inFlightRequests = Map.remove qid self._inFlightRequests
+  }
+  
 let _request
       socketInFlight
       (qid : string)
@@ -131,7 +139,8 @@ let _request
     ; Request.launched = self._tick
     }
   in
-  if socketInFlight >= (self.concurrency - self._inFlightRequests.Count) then
+  if socketInFlight >= (self.concurrency - self._inFlightRequests.Count) && important then
+    let _ = printfn "pending request %s (have %d)" qid self._inFlightRequests.Count in
     { self with _pendingRequests = Map.add qid newRequest self._pendingRequests }
   else
     { self with
@@ -146,13 +155,18 @@ let _request
           ) ::
             self.events ;
         _pendingRequests = Map.remove qid self._pendingRequests ;
-        _inFlightRequests = Map.add qid newRequest self._inFlightRequests
+        _inFlightRequests =
+          if important then
+            Map.add qid newRequest self._inFlightRequests
+          else
+            self._inFlightRequests
     }
 
 let query
       socketInFlight
       (toask : NodeIdent)
       (query : Serialize.Json)
+      (important : bool)
       (self : DHT) : DHT =
   let qid = ShortId.generate () in
   _request
@@ -171,7 +185,7 @@ let query
         )
     )
     toask
-    true
+    important
     self
                    
 let makePingBody qid (self : DHT) =
@@ -487,7 +501,7 @@ let _addNode
     let node = KBucket.get kBucketOps self.nodes peer.id None in
     let (fresh,defNode) =
       match node with
-      | Some node -> (false,node)
+      | Some node -> (false,{ node with vectorClock = self._tick })
       | None ->
          (true,
           { id = peer.id
@@ -723,7 +737,7 @@ let _findnode
        |]
        |> Serialize.jsonObject
      in
-     query socketInFlight toask q self
+     query socketInFlight toask q true self
   | None -> self
                    
 let tick socketInFlight self =
@@ -762,43 +776,3 @@ let bootstrap =
 
 let harvest dht =
   (List.rev dht.events, { dht with events = [] })
-             
-(*
-
-DHT.prototype.ping = function (peer, cb) {
-  this._ping(parseAddr(peer), function (err, res, peer) {
-    if (err) return cb(err)
-    var rinfo = decodePeer(res.value)
-    if (!rinfo) return cb(new Error('Invalid pong'))
-    cb(null, rinfo, {port: peer.port, host: peer.host, id: res.id})
-  })
-}
-
-DHT.prototype.toArray = function () {
-  return this.nodes.toArray()
-}
-
-DHT.prototype.address = function () {
-  return this.socket.address()
-}
-
-DHT.prototype.listen = function (port, cb) {
-  this.socket.listen(port, cb)
-}
-
-function parseAddr (addr) {
-  if (typeof addr === 'object' && addr) return addr
-  if (typeof addr === 'number') return parseAddr(':' + addr)
-  if (addr[0] === ':') return parseAddr('127.0.0.1' + addr)
-  return {port: Number(addr.split(':')[1] || 3282), host: addr.split(':')[0]}
-}
-
-function arbiter (incumbant, candidate) {
-  return candidate
-}
-
-DHT.prototype.ready = function (cb) {
-  if (!this._bootstrapped) this.once('ready', cb)
-  else cb()
-}
-*)

@@ -53,9 +53,9 @@ type DHTWithQueryProcessing<'dht> =
   ; events : DWQAction list
   ; future : Map<int,Set<string> >
   ; partial : Set<string>
-  ; deadlines : Map<int,Set<string> >
+  ; deadlines : Map<int,Set<(string * string)> >
   ; activeQueries : Map<string,Query>
-  ; drilling : Map<string,Query>
+  ; drilling : Map<string,Query list>
   ; pendingQueries : Query list
   ; maxParallel : int
   ; bootstrapped : bool
@@ -77,9 +77,11 @@ and DHTOps<'dht> =
      * - inflight requests
      * - Buffer node to contact
      * - Json query to deliver
+     * - Important ->
+     *    false - Send and don't track
      * - DHT
      *)
-    query : int -> NodeIdent -> Serialize.Json -> 'dht -> 'dht
+    query : int -> NodeIdent -> Serialize.Json -> bool -> 'dht -> 'dht
   ; (* See KBucket.closest *)
     getClosest : int -> Buffer -> 'dht -> NodeIdent array
   ; (* Harvest events from this object into actionable form.
@@ -90,6 +92,8 @@ and DHTOps<'dht> =
     tick : int -> 'dht -> 'dht
   ; (* Give a datagram to the DHT to interpret *)
     recv : int -> Serialize.Json -> NodeIdent -> 'dht -> 'dht
+  ; (* Cancel a request *)
+    cancel : string -> 'dht -> 'dht
   }
 
 let queryRetries = [2;4;7;15]
@@ -137,11 +141,28 @@ let updateDeadline query dwq =
     Map.tryFind deadlineAtTick dwq.deadlines
     |> optionDefault Set.empty
   in
+  let queryTid = Buffer.toString "binary" query.tid in
   { dwq with
       deadlines =
-        Map.add deadlineAtTick (Set.add query.id deadlineSet) dwq.deadlines
+        dwq.deadlines
+        |> Map.add deadlineAtTick (Set.add (query.id, queryTid) deadlineSet)
   }
-           
+
+let addDrilling (query : Query) drilling =
+  let addId = Buffer.toString "binary" query.tid in
+  match Map.tryFind addId drilling with
+  | None -> Map.add addId [query] drilling
+  | Some l -> Map.add addId (query :: (List.filter (fun q -> q.id <> query.id) l)) drilling
+  
+let removeDrilling (query : Query) drilling =
+  let removeId = Buffer.toString "binary" query.tid in
+  match Map.tryFind removeId drilling with
+  | None -> drilling
+  | Some qlist ->
+     match List.filter (fun q -> q.id <> query.id) qlist with
+     | [] -> Map.remove removeId drilling
+     | l -> Map.add removeId l drilling
+  
 (* Given a part of a wire transaction, pass it down for sending on the wire.
  * If needed, start a drilling task to find the peer's network address from
  * the DHT.
@@ -170,23 +191,20 @@ let startQuery dhtOps (query : Query) dwq =
              query.id
              query
              dwq.activeQueries ;
-         drilling = Map.remove removeId dwq.drilling ;
+         drilling = removeDrilling query dwq.drilling ;
          dht =
            dhtOps.query
              (dwq.drilling.Count + dwq.activeQueries.Count)
              toask
              query.passOn
+             false
              dwq.dht
      }
      |> updateRetry query
      |> updateDeadline query
   | _ ->
      { dwq with
-         drilling =
-           Map.add
-             removeId
-             query
-             dwq.drilling ;
+         drilling = addDrilling query dwq.drilling ;
          dht =
            dhtOps.findnode
              (dwq.drilling.Count + dwq.activeQueries.Count)
@@ -270,11 +288,11 @@ let _onresponse dhtOps (peer : NodeIdent) (resp : Serialize.Json) query dwq =
             Serialize.jsonString (Buffer.toString "base64" query.tid))
         |]
     in
-    { dwq with dht = dhtOps.query 0 peer passOn dwq.dht }
+    { dwq with dht = dhtOps.query 0 peer passOn false dwq.dht }
   in
   { dwq with
       activeQueries = Map.remove query.id dwq.activeQueries ;
-      drilling = Map.remove (Buffer.toString "binary" query.tid) dwq.drilling ;
+      drilling = removeDrilling query dwq.drilling ;
       partial = Set.remove query.id dwq.partial ;
       events = QueryReply (query.id, peer, resp) :: dwq.events
   }
@@ -393,24 +411,41 @@ let sortClosest tid (incoming : NodeIdent array) =
        )
   |> Array.map (fun (a,_) -> a)
                
-let takeFind dhtOps id peers (q : Query) dwq =
+let takeFind dhtOps id peers (q : Query) qrest dwq =
   let toComparable (n : NodeIdent) =
     (Buffer.toString "binary" n.id, n.host, n.port)
+  in
+  let fromComparable (id,host,port) =
+    { NodeIdent.id = Buffer.fromString id "binary"
+    ; NodeIdent.host = host
+    ; NodeIdent.port = port
+    }
   in
   let qClosest = Set.ofSeq (Array.map toComparable q.closestNodes) in
   let incoming = Set.ofSeq (Array.map toComparable peers) in
   let total = Set.union qClosest incoming in
-  if total.Count = qClosest.Count then
+  let totalArray = Array.ofSeq total |> Array.map fromComparable in
+  let checkId = Buffer.toString "binary" q.tid in
+  if Array.length totalArray > 0 &&
+       Buffer.equal totalArray.[0].id q.tid then
+    let targetNode = totalArray.[0] in
+    List.fold
+      (fun dwq qu ->
+        startQuery dhtOps { qu with closestNodes = totalArray } dwq
+      )
+      dwq
+      (q :: qrest)
+  else if total.Count = qClosest.Count then
     (* We didn't advance, we're as close as we come *)
-    if Array.length q.closestNodes > 0 &&
-         Buffer.equal q.closestNodes.[0].id q.tid then
-      startQuery dhtOps q dwq
-    else
-      { dwq with
-          drilling = Map.remove (Buffer.toString "binary" q.tid) dwq.drilling ;
-          activeQueries = Map.remove q.id dwq.activeQueries ;
-          events = (QueryError (q.id, q.tid, "node not found")) :: dwq.events
-      }
+    List.fold
+      (fun dwq q ->
+        { dwq with
+            activeQueries = Map.remove q.id dwq.activeQueries ;
+            events = (QueryError (q.id, q.tid, "node not found")) :: dwq.events
+        }
+      )
+      { dwq with drilling = Map.remove checkId dwq.drilling }
+      (q :: qrest)
   else
     (* Still advancing *)
     let closestWithDistances =
@@ -427,13 +462,16 @@ let takeFind dhtOps id peers (q : Query) dwq =
            )
       |> sortClosest q.tid
     in
-    startQuery
-      dhtOps
-      { q with closestNodes = Array.sub closestWithDistances 0 8 }
-      { dwq with
-          drilling = Map.remove (Buffer.toString "binary" q.tid) dwq.drilling
-      }
-
+    List.fold
+      (fun dwq qu ->
+        startQuery
+          dhtOps
+          { qu with closestNodes = Array.sub closestWithDistances 0 8 }
+          dwq
+      )
+      { dwq with drilling = Map.remove checkId dwq.drilling }
+      (q :: qrest)
+    
 let rec harvestDHT (dht : DHT.DHT) : (InternalAction list * DHT.DHT) =
   (dht.events
    |> Seq.map
@@ -458,11 +496,13 @@ let map dhtOps f dwq =
     (fun (dwq : DHTWithQueryProcessing<'dht>) (evt : InternalAction) ->
       match evt with
       | Find (target,peers) ->
+         let drillingId = Buffer.toString "binary" target in
          let drillingFor =
-           Map.tryFind (Buffer.toString "binary" target) dwq.drilling
+           Map.tryFind drillingId dwq.drilling
          in
          (match drillingFor with
-          | Some q -> takeFind dhtOps target peers q dwq
+          | Some [] -> { dwq with drilling = Map.remove drillingId dwq.drilling }
+          | Some (hd :: tl) -> takeFind dhtOps target peers hd tl dwq
           | None -> dwq
          )
       | Payload (json,source) ->
@@ -491,7 +531,7 @@ let recv dhtOps (json : Serialize.Json) (source : NodeIdent) dwq =
     )
     dwq
 
-let expireQuery txid dwq =
+let expireQuery dhtOps txid tid dwq =
   let events =
     match Map.tryFind txid dwq.activeQueries with
     | Some q ->
@@ -502,20 +542,39 @@ let expireQuery txid dwq =
          dwq.events
     | None -> dwq.events
   in
+  let events =
+    match Map.tryFind tid dwq.drilling with
+    | Some qlist ->
+       List.concat
+         [List.concat
+            (List.map
+               (fun qu ->
+                 if qu.deadline <= dwq.tick then
+                   [QueryError (qu.id, qu.tid, "Expired doing lookup")]
+                 else
+                   []
+               )
+               qlist
+            )
+         ;dwq.events 
+         ]
+    | None -> events
+  in
   { dwq with
       partial = Set.remove txid dwq.partial ;
       activeQueries = Map.remove txid dwq.activeQueries ;
       drilling = Map.remove txid dwq.drilling ;
-      events = events
+      events = events ;
+      dht = dhtOps.cancel txid dwq.dht
   }
     
-let doDeadlines (dwq : DHTWithQueryProcessing<'dht>) =
+let doDeadlines dhtOps (dwq : DHTWithQueryProcessing<'dht>) =
   let deadlineSet =
     Map.tryFind dwq.tick dwq.deadlines
     |> optionDefault Set.empty
   in
   Seq.fold
-    (fun dwq txid -> expireQuery txid dwq)
+    (fun dwq (txid,tid) -> expireQuery dhtOps txid tid dwq)
     { dwq with deadlines = Map.remove dwq.tick dwq.deadlines }
     (Set.toSeq deadlineSet)
 
@@ -555,7 +614,7 @@ let checkPartials dhtOps dwq =
          in
          match query.from with
          | Some from ->
-            { dwq with dht = dhtOps.query 0 from passOn dwq.dht }
+            { dwq with dht = dhtOps.query 0 from passOn false dwq.dht }
          | None -> dwq
       | None -> dwq
     )
@@ -595,7 +654,7 @@ let tick
       dwq
   in
   let dwq = { dwq with tick = dwq.tick + 1 } in
-  let dwq = doDeadlines dwq in
+  let dwq = doDeadlines dhtOps dwq in
   let dwq = checkPartials dhtOps dwq in
   doTimeouts dhtOps dwq
 

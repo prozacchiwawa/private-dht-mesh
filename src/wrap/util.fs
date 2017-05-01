@@ -202,6 +202,10 @@ let windowed (n : int) s =
 let tupleSndWith l r = (l,r)
 let tupleFstWith r l = (l,r)
 
+type Error = Unused0
+[<Emit("(function(e) { return new Error(e); })($0)")>]
+let newError : string -> Error = fun e -> failwith "JS"                     
+                     
 [<Emit("(function(e) { throw e; })($0)")>]
 let raise : 'e -> 'a = fun e -> failwith "JS"
 

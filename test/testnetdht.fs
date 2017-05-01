@@ -19,7 +19,7 @@ type TestSystem =
 
 let hostname n =
   sprintf "0.0.0.%d" n
-    
+  
 (* 
  * each node has a host name of (0.0.0.n), port 1, id hashId (0.0.0.n)
  *)
@@ -118,6 +118,7 @@ let dhtOps : DHTRPC.DHTOps<DHT.DHT> =
   ; tick = DHT.tick
   ; dhtId = fun dht -> dht.id
   ; recv = DHT._onrequest
+  ; cancel = DHT._cancelRequest
   }
 
 let tick self =
@@ -142,11 +143,18 @@ let tick self =
             |> Option.bind
                  (fun id ->
                    let bodyStr = Buffer.toString "utf-8" body in
+                   let nodeid = Buffer.fromString id "binary" in
+                   let _ =
+                     if Buffer.length nodeid <> 32 then
+                       raise "Wrong size nodeid"
+                     else
+                       ()
+                   in
                    bodyStr
                    |> Serialize.parse
                    |> Option.map
                         (fun body ->
-                          ({ NodeIdent.id = Buffer.fromString id "binary"
+                          ({ NodeIdent.id = nodeid
                            ; NodeIdent.host = host
                            ; NodeIdent.port = port
                            }

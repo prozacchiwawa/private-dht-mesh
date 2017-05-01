@@ -116,6 +116,7 @@ let main argv : unit =
       ; tick = DHT.tick
       ; dhtId = fun dht -> dht.id
       ; recv = DHT._onrequest
+      ; cancel = DHT._cancelRequest
       }
     in
     let dhtrpc = ref (DHTRPC.init dht) in
