@@ -89,6 +89,19 @@ let connectUnixServer path er cb =
       (fun c -> cb (new net__.Socket(c)))
   with _ -> ()
 
+[<Emit("(function () { try { var conn = $0.createConnection($2,$1); conn.on('connect', function() { $4(conn); }); conn.on('err', function(e) { $3('' + e); }); } catch (e) { $3('' + e); } })()")>]
+let connectTCPServer_ : NetModule -> string -> int -> (string -> unit) -> (net_.Socket -> unit) -> unit = fun host port p er cb -> failwith "JS"
+
+let connectTCPServer host port er cb =
+  try
+    connectTCPServer_
+      nm_
+      host
+      port
+      er
+      (fun c -> cb (new net__.Socket(c)))
+  with _ -> ()
+
 [<Import("*", "dgram")>]
 module dgram_ =
   type Socket =

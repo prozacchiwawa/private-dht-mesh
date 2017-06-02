@@ -41,12 +41,16 @@ type InternalAction =
   | Datagram of (Serialize.Json * NodeIdent)
   | Payload of (Serialize.Json * NodeIdent)
   | Find of (Buffer * (NodeIdent array))
+  | DHTNodeAdded of NodeIdent
+  | DHTNodeRemoved of NodeIdent
 
 type DWQAction =
   | QueryRequest of (string * NodeIdent * Serialize.Json)
   | QueryReply of (string * NodeIdent * Serialize.Json)
   | QueryError of (string * Buffer * string)
   | SendDatagram of (Serialize.Json * NodeIdent)
+  | NodeAdded of NodeIdent
+  | NodeRemoved of NodeIdent
 
 type DHTWithQueryProcessing<'dht> =
   { dht : 'dht
@@ -482,7 +486,22 @@ let rec harvestDHT (dht : DHT.DHT) : (InternalAction list * DHT.DHT) =
           | DHT.Ready -> [Bootstrapped]
           | DHT.Payload (json,tgt) -> [Payload (json,tgt)]
           | DHT.FindNode (target,peers) -> [Find (target,peers)]
-          | _ -> []
+          | DHT.AddNode node ->
+             let nid =
+               { NodeIdent.id = node.id
+               ; NodeIdent.host = node.host
+               ; NodeIdent.port = node.port
+               }
+             in
+             [DHTNodeAdded nid]
+          | DHT.RemoveNode node ->
+             let nid =
+               { NodeIdent.id = node.id
+               ; NodeIdent.host = node.host
+               ; NodeIdent.port = node.port
+               }
+             in
+             [DHTNodeRemoved nid]
         )
    |> Seq.concat
    |> List.ofSeq
@@ -510,6 +529,10 @@ let map dhtOps f dwq =
          takeDatagram dhtOps source json dwq
       | Datagram (json,source) ->
          { dwq with events = (SendDatagram (json,source)) :: dwq.events }
+      | DHTNodeAdded nid ->
+         { dwq with events = (NodeAdded nid) :: dwq.events }
+      | DHTNodeRemoved nid ->
+         { dwq with events = (NodeRemoved nid) :: dwq.events }
       | Bootstrapped ->
          let dwq = { dwq with bootstrapped = true } in
          match dwq.pendingQueries with
