@@ -9,7 +9,8 @@ open DHTRPC
 let serve
       dhtid
       (requestBus : bacon.Bus<InputEventDHT,unit>)
-      (outputBus : bacon.Observable<OutputEventDHT,unit>) =
+      (outputBus : bacon.Observable<OutputEventDHT,unit>)
+      app =
   let _ = printfn "Starting web server" in
   let doReply
         (requestBus : bacon.Bus<InputEventDHT,unit>)
@@ -154,7 +155,6 @@ let serve
     |> Option.map (doWebSocketMsgInner ws)
     |> optionDefault ()
   in
-  let app = Express.newApp () in
   let (allSockets : Map<string,Express.WebSocket> ref) = ref Map.empty in
   let _ =
     outputBus.onValue (doOutputMsg (fun m -> wsSend !allSockets m))
@@ -173,5 +173,4 @@ let serve
            (fun _ -> allSockets := Map.remove wsid !allSockets)
            ws
        )
-  |> Express.listen 3000
-  |> Q.map (fun app -> (dhtid, requestBus, app))
+  |> ignore

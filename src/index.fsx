@@ -26,6 +26,7 @@
 #load "./dhtrunner.fs"
 #load "./basicwsservice.fs"
 #load "./bonjourservice.fs"
+#load "./broadcastservice.fs"
  
 open Util
 open Buffer
@@ -63,6 +64,8 @@ let main argv : unit =
   let udpsocket = datagram.Socket("udp4") in
 
   let args = argv |> Seq.skip 1 |> Array.ofSeq in
+
+  let app = Express.newApp () in
 
   let _ =
     udpsocket.bind
@@ -113,16 +116,20 @@ let main argv : unit =
          in
          (dhtid, requestBus, outputBus)
        )
-  |> Q.andThen
-       (fun ((dhtid, requestBus, outputBus) :
-               (Buffer *
-                bacon.Bus<InputEventDHT,unit> *
-                bacon.Observable<OutputEventDHT,unit>)) ->
-         BasicWSService.serve dhtid requestBus outputBus
+  |> Q.map
+       (fun (dhtid, requestBus, outputBus) ->
+         BasicWSService.serve dhtid requestBus outputBus app ;
+         (dhtid, requestBus, outputBus)
        )
   |> Q.map
-       (fun (dhtid,requestBus,app) ->
-         BonjourService.serve dhtid requestBus
+       (fun (dhtid, requestBus, outputBus) ->
+         BroadcastService.serve dhtid requestBus outputBus app ;
+         (dhtid, requestBus, outputBus)
        )
+  |> Q.map (fun (dhtid,requestBus,outputBus) ->
+         BonjourService.serve dhtid requestBus ;
+         (dhtid, requestBus, outputBus)
+       )
+  |> Q.map (fun _ -> Express.listen 3000 app)
   |> Q.errThen (fun e -> (dump "error" (toString e)) |> ignore ; Q.value ())
   |> Q.fin
