@@ -1,4 +1,4 @@
 #!/bin/sh
 
-mocha ./out/test.js
+mocha -t 15000 ./out/test.js
 
