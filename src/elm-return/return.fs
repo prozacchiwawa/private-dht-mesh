@@ -23,11 +23,10 @@ Modeling the `update` tuple as a Monad similar to `Writer`
 
 open Respond
 open Util
-open Cmd
 
 (*| *)
 type Return<'msg,'model> =
-    ( 'model * Cmd<'msg> )
+    ( 'model * 'msg list )
 
 
 (*| *)
@@ -65,7 +64,7 @@ Map an `Return` into a `Return` containing a `Model` function
 *)
 (* andMap : Return msg a -> Return msg (a -> b) -> Return msg b *)
 let andMap ( model, cmd_ ) ( f, cmd ) =
-    (f model , Cmd.batch [ cmd ; cmd_ ])
+    (f model , Seq.concat [ cmd ; cmd_ ] |> List.ofSeq )
 
 
 (*|
@@ -98,7 +97,7 @@ update msg model =
 *)
 (* mapBoth : (a -> b) -> (c -> d) -> Return a c -> Return b d *)
 let mapBoth f f_ ( model, cmd ) =
-    ( f_ model, Cmd.map f cmd )
+    ( f_ model, List.map f cmd )
 
 
 (*|
@@ -161,7 +160,7 @@ Create a `Return` from a given `Model`
 *)
 (* singleton : model -> Return msg model *)
 let singleton a =
-    (a,Cmd.none)
+    (a,[])
 
 (*|
 ```elm
@@ -198,7 +197,7 @@ let andThen f ( model, cmd ) =
         ( model_, cmd_ ) =
             f model
     in
-        (model_ , (Cmd.batch [ cmd ; cmd_ ]))
+        (model_ , (Seq.concat [ cmd ; cmd_ ] |> List.ofSeq))
 
 
 (*|
@@ -238,13 +237,14 @@ let (<<<) f f_ model =
 let (>>>) a b =
     (<<<) b a
 
+(* >> -- tuareg *)
 
 (*|
 Add a `Cmd` to a `Return`, the `Model` is uneffected
 *)
 (* command : Cmd msg -> ReturnF msg model *)
 let command cmd ( model, cmd_ ) =
-    (model , Cmd.batch [ cmd ; cmd_ ])
+    (model , Seq.concat [ cmd ; cmd_ ] |> List.ofSeq )
 
 
 (*|
@@ -252,7 +252,7 @@ Add a `Cmd` to a `Return` based on its `Model`, the `Model` will not be effected
 *)
 (* effect_ : Respond msg model -> ReturnF msg model *)
 let effect_ f ( model, cmd ) =
-    ( model, Cmd.batch [ cmd ; f model ] )
+    ( model, Seq.concat [ cmd ; f model ] |> List.ofSeq )
 
 
 (*|
@@ -260,7 +260,7 @@ Map on the `Cmd`.
 *)
 (* mapCmd : (a -> b) -> Return a model -> Return b model *)
 let mapCmd f ( model, cmd ) =
-    ( model, Cmd.map f cmd )
+    ( model, List.map f cmd )
 
 
 (*|
@@ -276,9 +276,9 @@ let dropCmd ret =
 let sequence l =
     let
         f ( model, cmd ) ( models, cmds ) =
-            ((model :: models) , Cmd.batch [ cmd ; cmds ])
+            ((model :: models) , Seq.concat [ cmd ; cmds ] |> List.ofSeq )
     in
-        List.foldBack f l ( [], Cmd.none )
+        List.foldBack f l ( [], [] )
 
 
 (*| *)

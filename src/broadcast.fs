@@ -3,7 +3,6 @@ module Broadcast
 open Util
 open Buffer
 open RBTree
-open Cmd
 open Return
 
 (*
@@ -35,10 +34,16 @@ open Return
  * packets toward masters.
  *)
 
+type Message =
+  { channel : string
+  ; data : string
+  }
+   
 type Msg<'peer when 'peer : comparison> =
   | TimeTick
   | SetId of 'peer
-  | InPacket of ('peer * Serialize.Json)
+  | InMessage of ('peer * Message)
+  | OutMessage of Message
   | JoinBroadcast of string
   | LeaveBroadcast of string
   | AddNode of 'peer
@@ -54,7 +59,6 @@ type BroadcastPeer<'peer> =
 
 type SideEffect<'peer> =
   | OutPacket of ('peer * Serialize.Json)
-  | BroadcastReceive of (string * Serialize.Json)
 
 type BroadcastInstance<'peer when 'peer : comparison> =
   { masters : Set<'peer> ;
@@ -131,7 +135,7 @@ let encodePacketForChannel channel buf =
      ; ("m", Serialize.jsonString buf)
     |]
 
-let doMastersForChannel channel (state : State<'peer>) : (State<'peer> * Cmd<SideEffect<'peer>>) =
+let doMastersForChannel channel (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
   state.broadcasts
   |> Map.tryFind channel
   |> Option.map
@@ -163,7 +167,9 @@ let doMastersForChannel channel (state : State<'peer>) : (State<'peer> * Cmd<Sid
   |> optionDefault state
   |> Return.singleton
 
-let doPingPeers state =
+let doPingPeers
+      (state : State<'peer>) :
+      (State<'peer> * SideEffect<'peer> list) =
   state.broadcasts
   |> Map.toSeq
   |> Seq.map
@@ -174,22 +180,22 @@ let doPingPeers state =
          |> Seq.map
               (fun (m,_) ->
                 if Some m <> state.myId then
-                  Cmd.message (OutPacket (m, packet))
+                  [OutPacket (m, packet)]
                 else
-                  Cmd.none
+                  []
               )
          |> Seq.toList
-         |> Cmd.batch
+         |> Seq.concat
        )
+  |> Seq.concat
   |> Seq.toList
-  |> Cmd.batch
   |> tupleSndWith state
 
 let doTick state =
   (doExpireBroadcasts state)
   |> Return.andThen doPingPeers
 
-let indicatePeerAlive (p : 'peer) (state : State<'peer>) : (State<'peer> * Cmd<SideEffect<'peer>>) =
+let indicatePeerAlive (p : 'peer) (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
   (if Some p <> state.myId then
      { state with
          alive =
@@ -218,9 +224,9 @@ let indicatePeerAlive (p : 'peer) (state : State<'peer>) : (State<'peer> * Cmd<S
  *    the broadcast packet to every peer.
  * 2) Else, forward the broadcast packet to all masters.
  *)
-let forwardBroadcast (p : 'peer) (channel : string) (data : string) (state : State<'peer>) : (State<'peer> * Cmd<SideEffect<'peer>>) =
+let forwardBroadcast (p : 'peer) (channel : string) (data : string) (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
   let makePacket p =
-    Cmd.message (OutPacket (p,encodePacketForChannel channel data))
+    [OutPacket (p,encodePacketForChannel channel data)]
   in
   state.broadcasts
   |> Map.tryFind channel
@@ -246,25 +252,15 @@ let forwardBroadcast (p : 'peer) (channel : string) (data : string) (state : Sta
          )
          |> Seq.filter (fun m -> m <> p)
          |> Seq.map makePacket
+         |> Seq.concat
          |> Seq.toList
-         |> Cmd.batch
        )
   |> Option.map (tupleSndWith state)
-  |> optionDefault (state, Cmd.none)
+  |> optionDefault (state, [])
 
-let handlePacket p (b : Serialize.Json) state =
-  let channel =
-    Serialize.field "c" b
-    |> Option.map Serialize.asString
-    |> optionDefault ""
-  in
-  let data =
-    Serialize.field "m" b
-    |> Option.map Serialize.asString
-    |> optionDefault ""
-  in
+let handlePacket p msg state =
   state.broadcasts
-  |> Map.tryFind channel
+  |> Map.tryFind msg.channel
   |> Option.map
        (fun br ->
          br.peers
@@ -281,7 +277,7 @@ let handlePacket p (b : Serialize.Json) state =
        )
   |> Option.map
        (fun br ->
-         { state with broadcasts = Map.add channel br state.broadcasts }
+         { state with broadcasts = Map.add msg.channel br state.broadcasts }
        )
   |> optionDefault
        (let br =
@@ -292,13 +288,16 @@ let handlePacket p (b : Serialize.Json) state =
             peers = Map.add p { name = p } Map.empty
           }
         in
-        { state with broadcasts = Map.add channel br state.broadcasts }
+        { state with broadcasts = Map.add msg.channel br state.broadcasts }
        )
-  |> (fun state -> doMastersForChannel channel state)
+  |> (fun state -> doMastersForChannel msg.channel state)
   |> Return.andThen (indicatePeerAlive p)
-  |> Return.andThen (forwardBroadcast p channel data)
+  |> Return.andThen (forwardBroadcast p msg.channel msg.data)
 
-let update msg state =
+let update
+      (msg : Msg<'peer>)
+      (state : State<'peer>) :
+      (State<'peer> * SideEffect<'peer> list) =
   match msg with
   | SetId p -> { state with myId = Some p } |> Return.singleton
   | JoinBroadcast b ->
@@ -321,7 +320,7 @@ let update msg state =
                  (fun myid ->
                    forwardBroadcast myid b "" state
                  )
-            |> optionDefault (state, Cmd.none)
+            |> optionDefault (state, [])
           )
   | LeaveBroadcast b ->
      state.broadcasts
@@ -337,7 +336,10 @@ let update msg state =
             })
      |> optionDefault state
      |> Return.singleton
-  | InPacket (p,b) -> handlePacket p b state
+  | OutMessage b ->
+     state.myId
+     |> Option.map (fun id -> handlePacket id b state)
+     |> optionDefault (Return.singleton state)
+  | InMessage (p,b) -> handlePacket p b state
   | AddNode p -> indicatePeerAlive p state
   | TimeTick -> doTick state
-  | _ -> (state, Cmd.none)

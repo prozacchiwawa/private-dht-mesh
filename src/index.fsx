@@ -19,7 +19,6 @@
 #load "./kbucket.fs"
 #load "./dht.fs"
 #load "./dhtrpc.fs"
-#load "./cmd/cmd.fs"
 #load "./elm-return/respond.fs"
 #load "./elm-return/return.fs"
 #load "./broadcast.fs"
@@ -122,9 +121,34 @@ let main argv : unit =
          (dhtid, requestBus, outputBus)
        )
   |> Q.map
-       (fun (dhtid, requestBus, outputBus) ->
-         BroadcastService.serve dhtid requestBus outputBus app ;
-         (dhtid, requestBus, outputBus)
+       (fun (dhtid, toDHTBus, fromDHTBus) ->
+         let bserviceBus = Bacon.newBus () in
+         let brequestBus = Bacon.newBus () in
+         let _ =
+           fromDHTBus.onValue
+             (fun evt ->
+               match evt with
+               | QueryPerform (qid, nid, json) ->
+                  let body = Serialize.jsonObject [| |] in
+                  let _ = toDHTBus.push (QueryReply (qid, nid, body)) in
+                  bserviceBus.push (Buffer.toString "hex" nid.id, json)
+               | _ -> ()
+             )
+         in
+         let _ =
+           (Bacon.busObservable brequestBus).onValue
+             (fun (peer,body) ->
+               let qid = ShortId.generate () in
+               toDHTBus.push
+                 (QueryStart (qid, Buffer.fromString peer "hex", body))
+             )
+         in
+         BroadcastService.serve
+           (Buffer.toString "hex" dhtid)
+           (Bacon.busObservable bserviceBus)
+           brequestBus
+           app ;
+         (dhtid, toDHTBus, fromDHTBus)
        )
   |> Q.map (fun (dhtid,requestBus,outputBus) ->
          BonjourService.serve dhtid requestBus ;

@@ -2,7 +2,6 @@
 module Respond
 
 open Util
-open Cmd
 
 (*|
 @docs Respond, append, sum, zero, comap
@@ -17,26 +16,25 @@ has a certain shape. `Respond` facilitates
 this use case.
 *)
 type ('msg,'a) Respond =
-    'a -> Cmd<'msg>
-
+  'a -> 'msg list
+  
 
 (*| *)
 (* append : Respond<'msg,'a> -> Respond<'msg,'a> -> Respond<'msg,'a> *)
 let append f g a =
-    Cmd.batch [ f a ; g a ]
+  Seq.concat [ f a ; g a ] |> List.ofSeq
 
 
 (*| *)
 (* sum : List (Respond<'msg,'a>) -> Respond<'msg,'a> *)
 let sum rs a =
-    List.map (fun r -> r a) rs
-  |> Cmd.batch
+  List.map (fun r -> r a) rs |> Seq.concat |> List.ofSeq
 
 
 (*| *)
 (* zero : Respond<'msg,'a> *)
 let zero _ =
-    Cmd.none
+  []
 
 
 (*|
