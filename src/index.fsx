@@ -25,6 +25,7 @@
 #load "./dhtrunner.fs"
 #load "./basicwsservice.fs"
 #load "./bonjourservice.fs"
+#load "./bcastrunner.fs"
 #load "./broadcastservice.fs"
  
 open Util
