@@ -15,6 +15,7 @@ type InternalMsg<'ws> =
   | WSReceive of (string * Buffer)
   | AddNode of NodeIdent
   | RpcRequestIn of (string * Serialize.Json)
+  | Tick
                
 type Published =
   { subj : string
@@ -359,6 +360,8 @@ let update msg state =
      removeSocket wsid state
   | WSReceive (wsid,buf) ->
      doWebSocketMsg wsid buf state
+  | Tick ->
+     doBroadcastMsg Broadcast.TimeTick state
   | RpcRequestIn (peer,body) ->
      let mt =
        ( Serialize.field "c" body |> Option.map Serialize.asString

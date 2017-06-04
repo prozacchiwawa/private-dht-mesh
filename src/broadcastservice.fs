@@ -29,6 +29,7 @@ let serve
       (outputBus : bacon.Bus<(string * Serialize.Json),unit>)
       app =
   let _ = printfn "Serving nats" in
+  let tickbus = Bacon.repeatedly 5000 [| () |] in
   let rbus = Bacon.newBus () in
   let rob = Bacon.busObservable rbus in
   let state = ref init in
@@ -43,6 +44,7 @@ let serve
             (List.rev newState.events)
       )
   in
+  let _ = tickbus.onValue (fun _ -> rbus.push (BCastRunner.Tick)) in
   let _ =
     inputBus.onValue
       (fun msg ->
