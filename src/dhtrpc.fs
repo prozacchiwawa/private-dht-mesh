@@ -559,7 +559,7 @@ let addNode dhtOps nid dwq =
     (dhtOps.addNode
        (dwq.drilling.Count + dwq.activeQueries.Count)
        nid)
-    dwq
+    { dwq with events = (NodeAdded nid) :: dwq.events }
   
 let expireQuery dhtOps txid tid dwq =
   let events =

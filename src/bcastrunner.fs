@@ -7,7 +7,7 @@ open Broadcast
 open NodeSocket
 open DHTData
 
-type InputMsg<'ws> =
+type InternalMsg<'ws> =
   | NoOp
   | SetId of string
   | NewSocket of (string * 'ws)
@@ -40,12 +40,12 @@ type Model =
   ; events : Effect list
   }
   
-let connectRE = Util.re "^[Cc][Oo][Nn][Nn][Ee][Cc[][Tt] "
-let pubRE = Util.re "^[Pp][Uu][Bb] "
-let subRE = Util.re "^[Ss][Uu][Bb] "
-let unsubRE = Util.re "^[Uu][Nn][Ss][Uu][Bb] "
-let pingRE = Util.re "^[Pp][Ii][Nn][Gg] "
-let pongRE = Util.re "^[Pp][Oo][Nn][Gg] "
+let connectRE = Util.re "^[Cc][Oo][Nn][Nn][Ee][Cc[][Tt]( |$)"
+let pubRE = Util.re "^[Pp][Uu][Bb]( |$) "
+let subRE = Util.re "^[Ss][Uu][Bb]( |$)"
+let unsubRE = Util.re "^[Uu][Nn][Ss][Uu][Bb]( |$)"
+let pingRE = Util.re "^[Pp][Ii][Nn][Gg]( |$)"
+let pongRE = Util.re "^[Pp][Oo][Nn][Gg]( |$)"
   
 let byteSeqFromBuffer b =
   seq {
@@ -107,7 +107,8 @@ let chopFirstLine state =
      let firstLineData = Seq.take lf bs |> Seq.filter ((<>) 13) in
      let firstLineBuf = Array.ofSeq firstLineData |> Buffer.fromArray in
      let firstLine = firstLineBuf |> Buffer.toString "utf-8" in
-     dropBytes (Buffer.length firstLineBuf) state
+     let _ = printfn "parsing line %A" firstLine in
+     dropBytes (lf + 1) state
      |> Option.map (fun state -> (state, firstLine))
   | _ -> None
 
@@ -135,7 +136,13 @@ let interpretConnectMessage wsid line (state : Model) : Model =
   |> optionDefault (clientError wsid "error parsing connect info" state)
 
 let pong wsid reply state : Model =
-  let fullString = String.concat "" ["PONG ";reply;"\r\n"] in
+  let fullString =
+    if reply = "" then
+      "PONG\r\n"
+    else
+      String.concat "" ["PONG ";reply;"\r\n"]
+  in
+  let _ = printfn "pong return %A" fullString in
   { state with
       events = (WSSend (wsid, fullString)) :: state.events
   }
@@ -245,7 +252,7 @@ let runCommand wsid matches firstLine (state : Model) : Model =
      | _ -> clientError wsid "unsub" state
   | _ -> clientError wsid "??" state
   
-let tryParse wsid client state =
+let rec tryParse wsid client state =
   (* Find the end of the first line, stupidly for the moment *)
   chopFirstLine client
   |> Option.map
@@ -262,7 +269,10 @@ let tryParse wsid client state =
            |> List.map (fun (n,m) -> (n,Util.reMatch m firstLine))
            |> List.filter (fun (n,m) -> m)
          in
-         runCommand wsid matches firstLine state
+         let _ = printfn "matches %A" matches in
+         let _ = printfn "Buffer now %A" client.receivedData in
+         let state = runCommand wsid matches firstLine state in
+         tryParse wsid client state
        )
   |> optionDefault state
   
@@ -284,7 +294,9 @@ let newSocket wsid ws model =
           ; receivedData = []
           ; verbose = true
           }
-          model.clients
+          model.clients ;
+      events =
+        (WSSend (wsid, "INFO {}\r\n")) :: model.events
   }
 
 let updateSocket id state model =
@@ -302,11 +314,17 @@ let init =
   }
   
 let update msg state =
-  match msg with
+  match Util.log "bcast-msg" msg with
   | SetId id ->
      doBroadcastMsg (Broadcast.SetId id) state
   | AddNode nid ->
      doBroadcastMsg (Broadcast.AddNode (Buffer.toString "hex" nid.id)) state
+  | NewSocket (wsid,ws) ->
+     newSocket wsid ws state
+  | SocketClosed wsid ->
+     removeSocket wsid state
+  | WSReceive (wsid,buf) ->
+     doWebSocketMsg wsid buf state
   | RpcRequestIn (peer,body) ->
      let mt =
        ( Serialize.field "c" body |> Option.map Serialize.asString

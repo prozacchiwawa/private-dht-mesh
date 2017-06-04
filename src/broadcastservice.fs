@@ -7,6 +7,11 @@ open Broadcast
 open NodeSocket
 open DHTData
 open BCastRunner
+
+type InputMsg =
+  | NoOp
+  | AddNode of NodeIdent
+  | RpcRequestIn of (string * Serialize.Json)
    
 let passOnEffect
       (outputBus : bacon.Bus<(string * Serialize.Json),unit>) e s =
@@ -20,7 +25,7 @@ let passOnEffect
 (* Must use SetId message on broadcast to set a local peerid *)
 let serve
       (dhtid : string)
-      (inputBus : bacon.Observable<(string * Serialize.Json),unit>)
+      (inputBus : bacon.Observable<InputMsg,unit>)
       (outputBus : bacon.Bus<(string * Serialize.Json),unit>)
       app =
   let _ = printfn "Serving nats" in
@@ -40,13 +45,20 @@ let serve
   in
   let _ =
     inputBus.onValue
-      (fun (peer,body) -> rbus.push (RpcRequestIn (peer,body)))
+      (fun msg ->
+        match msg with
+        | AddNode nid -> rbus.push (BCastRunner.AddNode nid)
+        | RpcRequestIn (peer,body) ->
+           rbus.push (BCastRunner.RpcRequestIn (peer,body))
+        | NoOp -> ()
+      )
   in
   let _ = rbus.push (SetId dhtid) in
   Express.ws
-    "/v1/nats"
+    "/nats"
     (fun ws req ->
       let wsid = ShortId.generate () in
+      let _ = rbus.push (NewSocket (wsid, ws)) in
       Express.wsOnMessage
         (fun msg ->
           match msg with
@@ -56,6 +68,6 @@ let serve
         )
         ws ;
       Express.wsOnClose (fun _ -> rbus.push (SocketClosed wsid)) ws ;
-      rbus.push (NewSocket (wsid, ws))
     )
-    app
+    app ;
+  Express.files "/nats-demo" "./nats" app

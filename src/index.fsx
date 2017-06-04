@@ -128,11 +128,16 @@ let main argv : unit =
          let _ =
            fromDHTBus.onValue
              (fun evt ->
-               match evt with
+               match Util.dump "idx-bcast" evt with
+               | NodeAdded nid ->
+                  bserviceBus.push (BroadcastService.AddNode nid)
                | QueryPerform (qid, nid, json) ->
                   let body = Serialize.jsonObject [| |] in
                   let _ = toDHTBus.push (QueryReply (qid, nid, body)) in
-                  bserviceBus.push (Buffer.toString "hex" nid.id, json)
+                  bserviceBus.push
+                    (BroadcastService.RpcRequestIn
+                       (Buffer.toString "hex" nid.id, json)
+                    )
                | _ -> ()
              )
          in

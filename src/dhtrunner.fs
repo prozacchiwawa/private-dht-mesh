@@ -38,6 +38,8 @@ type OutputEventDHT =
   | Error of string
   (* Done with save operation *)
   | SaveComplete of string
+  (* Report a new node *)
+  | NodeAdded of NodeIdent
 
 (* Set up the DHT system as an autonomous actor in our system *)
 let runDHT
@@ -82,7 +84,7 @@ let runDHT
     inputBus.onValue
       (fun v ->
         let newDhtrpc =
-          match dump "inbus" v with
+          match v with
           | NoOp -> !dhtrpc
           | Start ->
              DHTRPC.map dhtOps DHT.bootstrap !dhtrpc
@@ -144,6 +146,9 @@ let runDHT
                resultBus.push (QueryError (txid,nid,error))
             | DHTRPC.SendDatagram (json,nid) ->
                resultBus.push (SendDatagram (json,nid))
+            | DHTRPC.NodeAdded nid ->
+               resultBus.push (NodeAdded nid)
+            | DHTRPC.NodeRemoved nid -> ()
           )
           events
         |> ignore
