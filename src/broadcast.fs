@@ -59,6 +59,7 @@ type BroadcastPeer<'peer> =
 
 type SideEffect<'peer> =
   | OutPacket of ('peer * Serialize.Json)
+  | UserMessage of Message
 
 type BroadcastInstance<'peer when 'peer : comparison> =
   { masters : Set<'peer> ;
@@ -297,6 +298,7 @@ let handlePacket p msg state =
   |> (doMastersForChannel msg.channel)
   |> Return.andThen (indicatePeerAlive p)
   |> Return.andThen (forwardBroadcast p msg.channel msg.data)
+  |> Return.command [UserMessage msg]
 
 let update
       (msg : Msg<'peer>)

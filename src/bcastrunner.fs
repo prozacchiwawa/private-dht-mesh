@@ -151,6 +151,35 @@ let applyBroadcastEff eff state =
   match Util.log "beff" eff with
   | OutPacket (peer,body) ->
      { state with events = (RpcRequest (peer,body)) :: state.events }
+  | UserMessage msg ->
+     let (channel,data,targets) =
+       msg.data
+       |> Option.bind
+            (fun data ->
+              Map.tryFind msg.channel state.membership
+              |> Option.map (fun s -> (msg.channel, data, s))
+            )
+       |> optionDefault (msg.channel, "", Set.empty)
+     in
+     let outmsgs =
+       targets
+       |> Seq.map
+            (fun (wsid,sid) ->
+              let dataBuf = Buffer.fromString data "utf-8" in
+              let fullMsg =
+                String.concat
+                  ""
+                  [ "MSG " ; channel ; " " ; sid ; " "
+                  ; string (Buffer.length dataBuf) ; "\r\n" ; data ; "\r\n"
+                  ]
+              in
+              WSSend (wsid, fullMsg)
+            )
+     in
+     Seq.fold
+       (fun state evt -> { state with events = evt :: state.events })
+       state
+       outmsgs
   
 let doBroadcastMsg msg state =
   let (b,e) = Broadcast.update msg state.broadcast in
