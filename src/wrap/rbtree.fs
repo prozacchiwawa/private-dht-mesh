@@ -34,9 +34,12 @@ module rbtree =
     abstract key : 'key
     abstract value : 'value
 
-[<Emit("(function() { var rbt = require('functional-red-black-tree'); return rbt(function(a,b) { return $0(a)(b); }); })()")>]
-let createTree : ('key -> 'key -> int) -> rbtree.Tree<'key,'value> = fun c -> failwith "JS"
+[<Emit("(function() { var rbt = require('functional-red-black-tree'); return rbt($0); })()")>]
+let createTree_ : System.Func<'key,'key,int> -> rbtree.Tree<'key,'value> = fun c -> failwith "JS"
 
+let createTree (f : 'key -> 'key -> int) =
+  createTree_ (System.Func<'key,'key,int>(f))
+  
 let rec iterSeq (i : rbtree.TreeIter<'key,'value>) : seq<('key * 'value)> =
   let j = i.clone () in
   let node = ref i.node in

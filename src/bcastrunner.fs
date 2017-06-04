@@ -148,7 +148,7 @@ let pong wsid reply state : Model =
   }
 
 let applyBroadcastEff eff state =
-  match eff with
+  match Util.log "beff" eff with
   | OutPacket (peer,body) ->
      { state with events = (RpcRequest (peer,body)) :: state.events }
   

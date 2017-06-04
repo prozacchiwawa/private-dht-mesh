@@ -298,7 +298,7 @@ let update
       (msg : Msg<'peer>)
       (state : State<'peer>) :
       (State<'peer> * SideEffect<'peer> list) =
-  match msg with
+  match Util.log "b" msg with
   | SetId p -> { state with myId = Some p } |> Return.singleton
   | JoinBroadcast b ->
      state.broadcasts
