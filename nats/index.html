@@ -1,5 +1,59 @@
 <html>
   <head>
+    <style>
+body {
+    margin: 0;
+    display: flex;
+    position: static;
+    flex-direction: column;
+    height: 100vh;
+    widht: 100vw;
+    left: 0;
+    top: 0;
+}
+
+#test {
+    display: flex;
+    position: relative;
+    flex-direction: row;
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+#chatarea {
+    display: flex;
+    position: relative;
+    flex-direction: column;
+}
+
+#chatarea > div {
+    display: flex;
+    flex-direction: row;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+#input {
+    display: flex;
+    flex-direction: row;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+#typehere {
+    display: flex;
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+#send {
+    display: flex;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+    </style>
   </head>
   <body>
     <div id='test'>
