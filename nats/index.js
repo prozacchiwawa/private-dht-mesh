@@ -13,20 +13,6 @@ nats.subscribe('foo', function(msg) {
     odiv.appendChild(newDiv);  
 });
 
-// Unsubscribing
-var sid = nats.subscribe('foo', function(msg) {});
-//nats.unsubscribe(sid);
-
-// Requests
-nats.request('help', function(response) {
-    console.log('Got a response for help: ' + response);
-});
-
-// Replies
-nats.subscribe('help', function(request, replyTo) {
-    nats.publish(replyTo, 'I can help!');
-});
-
 function sendInput() {
     var inp = document.getElementById('typehere');
     var val = inp.value;
