@@ -344,7 +344,7 @@ let init =
   { clients = Map.empty
   ; subids = Map.empty
   ; membership = Map.empty
-  ; broadcast = Broadcast.init 15000
+  ; broadcast = Broadcast.init 3
   ; events = []
   }
   
