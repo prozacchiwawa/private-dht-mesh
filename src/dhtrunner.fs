@@ -92,7 +92,6 @@ let runDHT
              DHTRPC.tick dhtOps !dhtrpc
           | Datagram msg ->
              (Buffer.toString "binary" msg.msg)
-             |> (fun txt -> printfn "raw %A" txt ; txt)
              |> Serialize.parse
              |> Option.map (fun p -> printfn "datagram %A" p ; p)
              |> Option.bind
@@ -103,7 +102,6 @@ let runDHT
              |> Option.map (fun (p,id) -> (p,Serialize.asString id))
              |> Option.map
                   (fun (p,id) ->
-                    let _ = printfn "recv from %s" id in
                     DHTRPC.recv
                       dhtOps
                       p

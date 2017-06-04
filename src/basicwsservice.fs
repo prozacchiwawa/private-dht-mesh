@@ -70,7 +70,7 @@ let serve
          )
   in
   let doOutputMsg wsSend v =
-    match dump "doOutputMsg" v with
+    match v with
     | QueryPerform (txid, nid, body) ->
        if txid = "test" then
          requestBus.push (DHTRunner.QueryReply (txid,nid,body))

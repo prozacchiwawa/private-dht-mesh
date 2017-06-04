@@ -103,7 +103,7 @@ let main argv : unit =
          let _ =
            outputBus.onValue
              (fun v ->
-               match dump "outbus" v with
+               match v with
                | SendDatagram (body, nodeid) ->
                   udpsocket.sendString
                     (Serialize.stringify body)
@@ -128,10 +128,11 @@ let main argv : unit =
          let _ =
            fromDHTBus.onValue
              (fun evt ->
-               match Util.dump "idx-bcast" evt with
+               match evt with
                | NodeAdded nid ->
                   bserviceBus.push (BroadcastService.AddNode nid)
                | QueryPerform (qid, nid, json) ->
+                  let _ = printfn "QueryPerform %A" json in
                   let body = Serialize.jsonObject [| |] in
                   let _ = toDHTBus.push (QueryReply (qid, nid, body)) in
                   bserviceBus.push

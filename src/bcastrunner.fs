@@ -162,7 +162,7 @@ let doBroadcastMsg msg state =
 let doPublish wsid pub subj replyto bytesStr state =
   let msgFromPublished p =
     { channel = p.subj
-    ; data = p.msg
+    ; data = Some p.msg
     }
   in
   let mt = (Util.parseInt bytesStr, Map.tryFind wsid state.clients) in
@@ -337,7 +337,7 @@ let update msg state =
        )
      in
      match mt with
-     | (Some c, Some m) ->
+     | (Some c, m) ->
         let msg = { channel = c ; data = m } in
         doBroadcastMsg (Broadcast.InMessage (peer,msg)) state
      | _ -> state
