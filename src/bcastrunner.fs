@@ -41,7 +41,7 @@ type Model =
   }
   
 let connectRE = Util.re "^[Cc][Oo][Nn][Nn][Ee][Cc[][Tt]( |$)"
-let pubRE = Util.re "^[Pp][Uu][Bb]( |$) "
+let pubRE = Util.re "^[Pp][Uu][Bb]( |$)"
 let subRE = Util.re "^[Ss][Uu][Bb]( |$)"
 let unsubRE = Util.re "^[Uu][Nn][Ss][Uu][Bb]( |$)"
 let pingRE = Util.re "^[Pp][Ii][Nn][Gg]( |$)"
@@ -165,7 +165,9 @@ let doPublish wsid pub subj replyto bytesStr state =
     ; data = p.msg
     }
   in
-  (match (Util.parseInt bytesStr, Map.tryFind wsid state.clients) with
+  let mt = (Util.parseInt bytesStr, Map.tryFind wsid state.clients) in
+  let _ = printfn "doPublish1 %A" mt in
+  (match mt with
    | (Some n, Some client) -> Some (n,client)
    | _ -> None
   )
@@ -253,6 +255,7 @@ let runCommand wsid matches firstLine (state : Model) : Model =
   | _ -> clientError wsid "??" state
   
 let rec tryParse wsid client state =
+  let _ = printfn "Buffer now %A" client.receivedData in
   (* Find the end of the first line, stupidly for the moment *)
   chopFirstLine client
   |> Option.map
@@ -270,9 +273,11 @@ let rec tryParse wsid client state =
            |> List.filter (fun (n,m) -> m)
          in
          let _ = printfn "matches %A" matches in
-         let _ = printfn "Buffer now %A" client.receivedData in
+         let state = { state with clients = Map.add wsid client state.clients } in
          let state = runCommand wsid matches firstLine state in
-         tryParse wsid client state
+         Map.tryFind wsid state.clients
+         |> Option.map (fun client -> tryParse wsid client state)
+         |> optionDefault state
        )
   |> optionDefault state
   
