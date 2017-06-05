@@ -102,33 +102,9 @@ let doExpireBroadcasts state =
   |> Return.singleton
 
 let stringKey channel =
-  let h = Crypto.createHash "md5" in
-  let _ = Crypto.updateBuffer (Buffer.fromString channel "binary") h in
-  (Crypto.digestHex h)
-  |> Seq.map Util.charCode
-  |> Util.windowed 4
-  |> (fun ss ->
-       Seq.concat
-         [ss 
-          |> Seq.truncate 1
-          |> Seq.map
-               (fun ss -> 
-                 ss
-                 |> Seq.map Util.stringFromCharCode
-                 |> String.concat ""
-                 |> parseHex
-                 |> Option.map (fun x -> x ||| 0xfc00)
-                 |> optionDefault 0xfc00
-                 |> toHex
-                 |> zeropad 4
-               ) ;
-          ss
-          |> Seq.skip 1
-          |> Seq.map (fun ss -> Seq.map Util.stringFromCharCode ss)
-          |> Seq.map (String.concat "")
-         ]
-     )
-  |> String.concat ":"
+  let h = Crypto.createHash "sha256" in
+  let _ = Crypto.updateBuffer (Buffer.fromString channel "utf-8") h in
+  Crypto.digestHex h
 
 let encodePacketForChannel channel buf =
   Serialize.jsonObject
@@ -199,7 +175,7 @@ let doPingPeers
   |> tupleSndWith state
 
 let doTick state =
-  (doExpireBroadcasts state)
+  (doExpireBroadcasts { state with curTick = state.curTick + 1 })
   |> Return.andThen doPingPeers
 
 let indicatePeerAlive (p : 'peer) (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
