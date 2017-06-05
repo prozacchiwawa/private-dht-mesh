@@ -11,12 +11,16 @@
 #load "../src/wrap/network.fs"
 #load "../src/wrap/bonjour.fs"
 #load "../src/wrap/crypto.fs"
+#load "../src/wrap/rbtree.fs"
 #load "../src/queue.fs"
 #load "../src/forward.fs"
 #load "../src/kbucket.fs"
 #load "../src/dhtdata.fs"
 #load "../src/dht.fs"
 #load "../src/dhtrpc.fs"
+#load "../src/elm-return/respond.fs"
+#load "../src/elm-return/return.fs"
+#load "../src/broadcast.fs"
 #load "./mocha.fs"
 #load "./kbuckettest.fs"
 #load "./testnet.fs"
@@ -24,6 +28,7 @@
 #load "./dhtvis.fs"
 #load "./testnetdht.fs"
 #load "./dhtrpctest.fs"
+#load "./broadcasttest.fs"
 
 open Util
 open Buffer
@@ -83,6 +88,7 @@ let tests : (string * (It list)) list =
   ; "k-bucket" => KBucketTest.tests
   ; "dht" => DHTTest.tests
   ; "dhtrpc" => DHTRpcTest.tests
+  ; "broadcast" => BroadcastTest.tests
   ]
 
 let _ =
