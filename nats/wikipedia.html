@@ -1,14 +1,115 @@
 <html>
   <head>
     <title>Wikipedia via NATS protocol using broadcast mesh on DHT</title>
+    <link href="https://fonts.googleapis.com/css?family=Fjalla+One|Open+Sans" rel="stylesheet"> 
+    <style>
+html {
+    font-family: 'Open Sans', sans-serif;
+}
+      
+#search-bar {
+    display: flex;
+    flex-grow: 0;
+    flex-shrink: 0;
+    flex-direction: row;
+    background-color: #194c5d;
+    align-items: baseline;
+    padding: 1vmin;
+}
+
+#search-label {
+    color: white;
+    font-size: 3vmin;
+}
+
+#search-entry {
+    border: 0;
+    border-radius: 0.5vmin;
+    font-size: 3vmin;
+    margin-left: 2vmin;
+    flex-grow: 1;
+    flex-shrink: 1;
+}
+
+#search-perform {
+    border: 0;
+    border-radius: 0.5vmin;
+    font-size: 3vmin;
+    margin-left: 2vmin;
+    flex-grow: 0.1;
+    flex-shrink: 0;
+    color: white;
+    background-color: #194c5d;
+}
+
+#wiki-demo-heading {
+    display: flex;
+    flex-grow: 0;
+    flex-shrink: 0;
+    padding: 2vmin;
+    align-items: center;
+    justify-content: center;
+    font-size: 5vmin;
+    background-color: #194c5d;
+}
+
+#wiki-demo-heading-content {
+    color: white;
+    font-family: 'Fjalla One', sans-serif;
+}
+
+#wiki-demo-heading-explanation {
+    display: flex;
+    flex-grow: 0;
+    flex-shrink: 0;
+    padding: 2vmin;
+    align-items: center;
+    justify-content: center;
+    font-size: 5vmin;
+    background-color: #3d8efe;    
+}
+
+#wiki-demo-heading-explanation-content {
+    font-size: 3vmin;
+    width: 80vw;
+    font-family: 'Open Sans', sans-serif;
+}
+
+#article-wrapper {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    width: 100vw;
+    min-height: 30vh;
+}
+
+#article {
+    margin-top: 2vmin;
+    font-size: 3vmin;
+    max-width: 90vw;
+    overflow-x: auto;
+}
+    </style>
   </head>
   <body>
+    <div id='wiki-demo-heading'>
+      <div id='wiki-demo-heading-content'>Wikipedia service demo with NATS protocol over our mesh</div>
+    </div>
+    <div id='wiki-demo-heading-explanation'>
+      <div id='wiki-demo-heading-explanation-content'>
+        A standalone server is connected to the mesh via NATS protocol, providing responses to queries on the 'wikipedia' topic.  Multiple servers could provide this functionality redundantly and disconnected from the main internet.
+      </div>
+    </div>
     <div id='search-bar'>
       <div id='search-label'>Wikipedia topic</div>
       <input id='search-entry'></input>
       <button id='search-perform'>Go!</button>
-    </div>
-    <div id='article'>
+      </div>
+    <div id='article-wrapper'>
+      <div id='article'>
+        Waiting...
+      </div>
     </div>
     <script src='EventEmitter.js'></script>
     <script src='nats-websocket.js'></script>
