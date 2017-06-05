@@ -117,14 +117,22 @@ let encodePacketForChannel channel buf =
     )
   
 let doMastersForChannel channel (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
+  let peerlist = state.alive |> RBTree.head |> RBTree.iterSeq |> List.ofSeq in
+  let _ = printfn "doMastersForChannel: %A" peerlist in  
   state.broadcasts
   |> Map.tryFind channel
   |> Option.map
        (fun br ->
          let wantKey = stringKey channel in
+         let masterCandidates =
+           RBTree.head state.alive
+           |> RBTree.iterSeq
+         in
+         let _ = printfn "Master candidates %A" masterCandidates in
          let masters =
-           [state.alive.lt wantKey |> RBTree.iterSeq ;
-            RBTree.head state.alive |> RBTree.iterSeq]
+           [ state.alive.lt wantKey |> RBTree.iterSeq
+           ; RBTree.head state.alive |> RBTree.iterSeq
+           ]
            |> Seq.concat
            |> Seq.toArray
            |> Seq.truncate state.numMasters
@@ -179,6 +187,8 @@ let doTick state =
   |> Return.andThen doPingPeers
 
 let indicatePeerAlive (p : 'peer) (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
+  let peerlist = state.alive |> RBTree.head |> RBTree.iterSeq |> List.ofSeq in
+  let _ = printfn "indicatePeerAlive %A" peerlist in  
   (if Some p <> state.myId then
      { state with
          alive =
@@ -199,7 +209,13 @@ let indicatePeerAlive (p : 'peer) (state : State<'peer>) : (State<'peer> * SideE
      }
    else
      state
-  ) |> Return.singleton
+  )
+  |> (fun state ->
+       let peerlist = state.alive |> RBTree.head |> RBTree.iterSeq |> List.ofSeq in
+       let _ = printfn "indicatePeerAlive %A" peerlist in
+       state
+     )
+  |> Return.singleton
 
 (* Using the broadcast state for the indicated channel, do one of these
  * things:
