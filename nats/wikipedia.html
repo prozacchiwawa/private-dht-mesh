@@ -10,7 +10,11 @@ html {
 body {
     margin: 0;
 }
-      
+
+br {
+    display: none;
+}
+
 #search-bar {
     display: flex;
     flex-grow: 0;
@@ -115,8 +119,14 @@ body {
         Waiting...
       </div>
     </div>
+    <script src='q.js'></script>
     <script src='EventEmitter.js'></script>
     <script src='nats-websocket.js'></script>
     <script src='wsquery.js'></script>
+    <script src='wiky.js'></script>
+    <script src='testmd.js'></script>
+    <script>
+    //getAndRenderLocalFile('eta-carinae.txt');
+    </script>
   </body>
 </html>

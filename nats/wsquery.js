@@ -15,6 +15,19 @@ var assembled = [];
 
 var prefix = Math.floor(Math.random() * 999999).toString();
 var assembled = [];
+
+function render(file) {
+    console.log('render to html');
+    var stripped = file;
+    do {
+        file = stripped;
+        stripped = file.replace(stripRE, '');
+    } while (stripped != file);
+    var articleDiv = document.getElementById('article');
+    emptyDiv(articleDiv);
+    articleDiv.innerHTML = wiky.process(stripped);
+}
+
 nats.subscribe('wikiresult', function(mtext) {
     console.log(mtext);
     var msg = JSON.parse(mtext);
@@ -31,12 +44,7 @@ nats.subscribe('wikiresult', function(mtext) {
             requestBlock();
         } else {
             var text = assembled.join("");
-            var articleDiv = document.getElementById('article');
-            emptyDiv(articleDiv);
-            var pre = document.createElement('pre');
-            var textNode = document.createTextNode(text);
-            pre.appendChild(textNode);
-            articleDiv.appendChild(pre);
+            render(text);
         }
     }
 });
