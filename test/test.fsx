@@ -12,6 +12,7 @@
 #load "../src/wrap/bonjour.fs"
 #load "../src/wrap/crypto.fs"
 #load "../src/wrap/rbtree.fs"
+#load "../src/ports.fs"
 #load "../src/queue.fs"
 #load "../src/forward.fs"
 #load "../src/kbucket.fs"

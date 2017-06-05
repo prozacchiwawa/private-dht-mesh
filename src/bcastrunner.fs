@@ -373,11 +373,17 @@ let update msg state =
      let mt =
        ( Serialize.field "c" body |> Option.map Serialize.asString
        , Serialize.field "m" body |> Option.map Serialize.asString
+       , Serialize.field "f" body |> Option.map Serialize.asString
        )
      in
      match mt with
-     | (Some c, m) ->
+     | (Some c, m, None) ->
         let msg = { channel = c ; data = m } in
         doBroadcastMsg (Broadcast.InMessage (peer,msg)) state
+     | (Some c, m, Some f) ->
+        let pmsg = { channel = c ; data = None } in
+        let msg = { channel = c ; data = m } in
+        doBroadcastMsg (Broadcast.InMessage (peer,pmsg)) state
+        |> doBroadcastMsg (Broadcast.ForwardedMessage (f,msg))
      | _ -> state
   | _ -> state

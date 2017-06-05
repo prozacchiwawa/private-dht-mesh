@@ -43,6 +43,7 @@ type Msg<'peer when 'peer : comparison> =
   | TimeTick
   | SetId of 'peer
   | InMessage of ('peer * Message)
+  | ForwardedMessage of ('peer * Message)
   | OutMessage of Message
   | JoinBroadcast of string
   | LeaveBroadcast of string
@@ -106,12 +107,15 @@ let stringKey channel =
   let _ = Crypto.updateBuffer (Buffer.fromString channel "utf-8") h in
   Crypto.digestHex h
 
-let encodePacketForChannel channel buf =
+let encodePacketForChannel channel buf forwarded =
   Serialize.jsonObject
     (List.concat
        [ [("c", Serialize.jsonString channel)]
        ; buf
          |> Option.map (fun buf -> ("m", Serialize.jsonString buf))
+         |> optionToList
+       ; forwarded
+         |> Option.map (fun from -> ("f", Serialize.jsonString from))
          |> optionToList
        ] |> Array.ofSeq
     )
@@ -165,7 +169,7 @@ let doPingPeers
   |> Map.toSeq
   |> Seq.map
        (fun (channel,br) ->
-         let packet = encodePacketForChannel channel None in
+         let packet = encodePacketForChannel channel None None in
          br.peers
          |> Map.toSeq
          |> Seq.map
@@ -223,9 +227,15 @@ let indicatePeerAlive (p : 'peer) (state : State<'peer>) : (State<'peer> * SideE
  *    the broadcast packet to every peer.
  * 2) Else, forward the broadcast packet to all masters.
  *)
-let forwardBroadcast (p : 'peer) (channel : string) (data : string option) (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
+let forwardBroadcast
+      (p : 'peer)
+      (f : bool)
+      (channel : string)
+      (data : string option)
+      (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
+  let forward = if f then Some p else None in
   let makePacket p =
-    [OutPacket (p,encodePacketForChannel channel data)]
+    [OutPacket (p,encodePacketForChannel channel data forward)]
   in
   state.broadcasts
   |> Map.tryFind channel
@@ -255,7 +265,7 @@ let forwardBroadcast (p : 'peer) (channel : string) (data : string option) (stat
   |> Option.map (tupleSndWith state)
   |> optionDefault (state, [])
 
-let handlePacket p msg state =
+let handlePacket p forwarded msg state =
   state.broadcasts
   |> Map.tryFind msg.channel
   |> Option.map
@@ -289,7 +299,7 @@ let handlePacket p msg state =
        )
   |> (doMastersForChannel msg.channel)
   |> Return.andThen (indicatePeerAlive p)
-  |> Return.andThen (forwardBroadcast p msg.channel msg.data)
+  |> Return.andThen (forwardBroadcast p forwarded msg.channel msg.data)
   |> Return.command [UserMessage msg]
 
 let update
@@ -316,7 +326,7 @@ let update
             state.myId
             |> Option.map
                  (fun myid ->
-                   forwardBroadcast myid b None state
+                   forwardBroadcast myid false b None state
                  )
             |> optionDefault (state, [])
           )
@@ -337,8 +347,9 @@ let update
      |> Return.singleton
   | OutMessage b ->
      state.myId
-     |> Option.map (fun id -> handlePacket id b state)
+     |> Option.map (fun id -> handlePacket id false b state)
      |> optionDefault (Return.singleton state)
-  | InMessage (p,b) -> handlePacket p b state
+  | InMessage (p,b) -> handlePacket p false b state
+  | ForwardedMessage (p,b) -> handlePacket p true b state 
   | AddNode p -> indicatePeerAlive p state
   | TimeTick -> doTick state

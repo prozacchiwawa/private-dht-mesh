@@ -59,7 +59,7 @@ let runDHT
               let values = stringSplit "@" a in
               { NodeIdent.id = Buffer.fromString values.[0] "hex"
               ; NodeIdent.host = values.[1]
-              ; NodeIdent.port = 3327
+              ; NodeIdent.port = Ports.udpport
               }
             )
             args

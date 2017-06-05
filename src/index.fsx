@@ -15,6 +15,7 @@
 #load "./wrap/websocket.fs"
 #load "./wrap/express.fs"
 #load "./wrap/rbtree.fs"
+#load "./ports.fs"
 #load "./dhtdata.fs"
 #load "./kbucket.fs"
 #load "./dht.fs"
@@ -70,7 +71,7 @@ let main argv : unit =
   let _ =
     udpsocket.bind
       { NodeSocket.addr = "0.0.0.0" ;
-        NodeSocket.port = 3327 ;
+        NodeSocket.port = Ports.udpport ;
         NodeSocket.exclusive = true
       }
   in
@@ -161,6 +162,6 @@ let main argv : unit =
          BonjourService.serve dhtid requestBus ;
          (dhtid, requestBus, outputBus)
        )
-  |> Q.map (fun _ -> Express.listen 3000 app)
+  |> Q.map (fun _ -> Express.listen Ports.webport app)
   |> Q.errThen (fun e -> (dump "error" (toString e)) |> ignore ; Q.value ())
   |> Q.fin
