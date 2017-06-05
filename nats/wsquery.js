@@ -80,11 +80,13 @@ var sp = document.getElementById('search-perform');
 sp.addEventListener('click', function() {
     var searchDiv = document.getElementById('search-entry');
     query(searchDiv.value);
+    searchDiv.blur();
 });
 var se = document.getElementById('search-entry');
 se.addEventListener('keydown', function(evt) {
     if (evt.keyCode == 13) {
         var searchDiv = document.getElementById('search-entry');
         query(searchDiv.value);
+        searchDiv.blur();
     }
 });
