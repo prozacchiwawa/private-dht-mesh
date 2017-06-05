@@ -257,6 +257,8 @@ let runCommand wsid matches firstLine (state : Model) : Model =
   | [("ping",true)] ->
      let restString = Util.substr 5 (String.length firstLine) firstLine in
      pong wsid restString state
+  | [("pong",true)] ->
+     state
   | [("pub",true)] ->
      match Util.stringSplit " " firstLine with
      | [| pub; subj; bytes |] -> (* No reply-to *)
@@ -361,7 +363,12 @@ let update msg state =
   | WSReceive (wsid,buf) ->
      doWebSocketMsg wsid buf state
   | Tick ->
-     doBroadcastMsg Broadcast.TimeTick state
+     let events =
+       Map.toSeq state.clients
+       |> Seq.map (fun (k,v) -> WSSend (k, "PING\r\n"))
+       |> List.ofSeq
+     in
+     doBroadcastMsg Broadcast.TimeTick { state with events = events @ state.events }
   | RpcRequestIn (peer,body) ->
      let mt =
        ( Serialize.field "c" body |> Option.map Serialize.asString
