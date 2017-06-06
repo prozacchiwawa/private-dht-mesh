@@ -11,11 +11,11 @@ let serve dhtid (requestBus : bacon.Bus<DHTRunner.InputEventDHT,unit>) =
   let bonjour = Bonjour.newBonjour () in
   let dhtidArray = Buffer.toArray dhtid in
   let dhtidStr = String.concat "" (Array.map (sprintf "%02x") dhtidArray) in
-  let serviceName = String.concat "." ["com.euso.DHTRPC";dhtidStr] in
+  let serviceName = String.concat "." [Ports.bonjour;dhtidStr] in
   bonjour.publish
-    (Bonjour.serviceDesc serviceName "com.euso.DHTRPC" Ports.udpport) ;
+    (Bonjour.serviceDesc serviceName Ports.bonjour Ports.udpport) ;
   Bonjour.find
-    (Bonjour.serviceQueryByType "com.euso.DHTRPC")
+    (Bonjour.serviceQueryByType Ports.bonjour)
     (fun service ->
       let host =
         (match service.addresses |> List.ofSeq with
