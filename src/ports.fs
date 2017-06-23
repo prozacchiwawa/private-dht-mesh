@@ -1,5 +1,5 @@
 module Ports
 
-let webport = 4000
-let udpport = 4327
+let webport = 3000
+let udpport = 3327
 let bonjour = "com.euso.DHTRPC4"
