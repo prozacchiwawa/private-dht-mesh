@@ -406,12 +406,14 @@ let handlePacket
        )
   |> doMastersForChannel msg.channel
   |> Return.andThen (indicatePeerAlive p)
-  |> (fun state ->
+  |> (fun ret ->
        if not retx then
-         Return.andThen (forwardBroadcast p forwarded msg) state
+         Return.andThen (forwardBroadcast p forwarded msg) ret
          |> Return.command [UserMessage msg]
+       else if Some p = state.myId then
+         Return.command [UserMessage msg] ret
        else
-         state
+         ret
      )
 
 let nextPacket p c s state =
