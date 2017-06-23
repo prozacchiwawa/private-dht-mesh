@@ -4,7 +4,6 @@ open Util
 open Buffer
 open Bacon
 open Broadcast
-open NodeSocket
 open DHTData
 
 type InternalMsg<'ws> =
@@ -15,6 +14,8 @@ type InternalMsg<'ws> =
   | WSReceive of (string * Buffer)
   | AddNode of NodeIdent
   | RpcRequestIn of (string * Serialize.Json)
+  | RpcSuccess of (string * Serialize.Json)
+  | RpcFailure of string
   | Tick
                
 type Published =
@@ -27,14 +28,14 @@ type Effect =
   | RpcRequest of (string * Serialize.Json)
   | WSSend of (string * string)
   
-type WSState =
-  { websocket : Express.WebSocket
+type WSState<'a> =
+  { websocket : 'a
   ; receivedData : Buffer list
   ; verbose : bool
   }
 
-type Model =
-  { clients : Map<string,WSState>
+type Model<'a> =
+  { clients : Map<string,WSState<'a>>
   ; membership : Map<string,Set<(string * string)>>
   ; subids : Map<(string * string),string>
   ; broadcast : Broadcast.State<string>
@@ -113,13 +114,13 @@ let chopFirstLine state =
      |> Option.map (fun state -> (state, firstLine))
   | _ -> None
 
-let clientError wsid emsg state : Model =
+let clientError wsid emsg state : Model<'a> =
   let fullString = String.concat "" ["-ERR ";emsg;"\r\n"] in
   { state with
       events = (WSSend (wsid, fullString)) :: state.events
   }
 
-let interpretConnectMessage wsid line (state : Model) : Model =
+let interpretConnectMessage wsid line (state : Model<'a>) : Model<'a> =
   Map.tryFind wsid state.clients
   |> Option.bind
        (fun client -> Serialize.parse line |> Option.map (fun s -> (client,s)))
@@ -136,7 +137,7 @@ let interpretConnectMessage wsid line (state : Model) : Model =
        )
   |> optionDefault (clientError wsid "error parsing connect info" state)
 
-let pong wsid reply state : Model =
+let pong wsid reply state : Model<'a> =
   let fullString =
     if reply = "" then
       "PONG\r\n"
@@ -192,6 +193,7 @@ let doBroadcastMsg msg state =
 let doPublish wsid pub subj replyto bytesStr state =
   let msgFromPublished p =
     { channel = p.subj
+    ; seq = -1
     ; data = Some p.msg
     }
   in
@@ -228,7 +230,7 @@ let doSubscribe wsid sid subj state =
       membership = Map.add subj newSet state.membership
   }
 
-let doUnsubscribe (wsid : string) (sid : string) (subj : string) (state : Model) =
+let doUnsubscribe (wsid : string) (sid : string) (subj : string) (state : Model<'a>) =
   let subSet = Map.tryFind subj state.membership in
   let newSet =
     subSet
@@ -249,7 +251,7 @@ let doUnsubscribe (wsid : string) (sid : string) (subj : string) (state : Model)
         membership = Map.add subj newSet state.membership
     }
   
-let runCommand wsid matches firstLine (state : Model) : Model =
+let runCommand wsid matches firstLine (state : Model<'a>) : Model<'a> =
   match matches with
   | [("connect",true)] ->
      let restString = Util.substr 7 (String.length firstLine) firstLine in
@@ -342,7 +344,7 @@ let updateSocket id state model =
 let removeSocket id model =
   { model with clients = Map.remove id model.clients }
 
-let init =
+let init _ : Model<'a> =
   { clients = Map.empty
   ; subids = Map.empty
   ; membership = Map.empty
@@ -369,20 +371,33 @@ let update msg state =
        |> List.ofSeq
      in
      doBroadcastMsg Broadcast.TimeTick { state with events = events @ state.events }
+  | RpcSuccess (peer,body) ->
+     let mt =
+       ( Serialize.field "c" body |> Option.map Serialize.asString
+       , Serialize.field "s" body |> Option.bind Serialize.floor
+       )
+     in
+     match mt with
+     | (Some c, Some s) ->
+        doBroadcastMsg (Broadcast.Success (peer,c,s)) state
+     | _ -> state
+  | RpcFailure peer ->
+     doBroadcastMsg (Broadcast.Failure peer) state
   | RpcRequestIn (peer,body) ->
      let mt =
        ( Serialize.field "c" body |> Option.map Serialize.asString
+       , Serialize.field "s" body |> Option.bind Serialize.floor
        , Serialize.field "m" body |> Option.map Serialize.asString
        , Serialize.field "f" body |> Option.map Serialize.asString
        )
      in
      match mt with
-     | (Some c, m, None) ->
-        let msg = { channel = c ; data = m } in
+     | (Some c, Some s, m, None) ->
+        let msg = { channel = c ; seq = s ; data = m } in
         doBroadcastMsg (Broadcast.InMessage (peer,msg)) state
-     | (Some c, m, Some f) ->
-        let pmsg = { channel = c ; data = None } in
-        let msg = { channel = c ; data = m } in
+     | (Some c, Some s, m, Some f) ->
+        let pmsg = { channel = c ; seq = s ; data = None } in
+        let msg = { channel = c ; seq = s ; data = m } in
         doBroadcastMsg (Broadcast.InMessage (peer,pmsg)) state
         |> doBroadcastMsg (Broadcast.ForwardedMessage (f,msg))
      | _ -> state

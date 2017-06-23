@@ -133,11 +133,15 @@ let main argv : unit =
                | NodeAdded nid ->
                   bserviceBus.push (BroadcastService.AddNode nid)
                | QueryPerform (qid, nid, json) ->
-                  let _ = printfn "QueryPerform %A" json in
                   let body = Serialize.jsonObject [| |] in
                   let _ = toDHTBus.push (QueryReply (qid, nid, body)) in
                   bserviceBus.push
                     (BroadcastService.RpcRequestIn
+                       (Buffer.toString "hex" nid.id, json)
+                    )
+               | QueryComplete (qud, nid, json) ->
+                  bserviceBus.push
+                    (BroadcastService.RpcRequestDone
                        (Buffer.toString "hex" nid.id, json)
                     )
                | _ -> ()

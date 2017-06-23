@@ -4,7 +4,6 @@ open Util
 open Buffer
 open Bacon
 open Broadcast
-open NodeSocket
 open DHTData
 open BCastRunner
 
@@ -12,6 +11,8 @@ type InputMsg =
   | NoOp
   | AddNode of NodeIdent
   | RpcRequestIn of (string * Serialize.Json)
+  | RpcRequestDone of (string * Serialize.Json)
+  | RpcRequestFail of string
    
 let passOnEffect
       (outputBus : bacon.Bus<(string * Serialize.Json),unit>) e s =
@@ -32,7 +33,7 @@ let serve
   let tickbus = Bacon.repeatedly 5000 [| () |] in
   let rbus = Bacon.newBus () in
   let rob = Bacon.busObservable rbus in
-  let state = ref init in
+  let state = ref (init ()) in
   let _ =
     rob.onValue
       (fun v ->
@@ -52,6 +53,10 @@ let serve
         | AddNode nid -> rbus.push (BCastRunner.AddNode nid)
         | RpcRequestIn (peer,body) ->
            rbus.push (BCastRunner.RpcRequestIn (peer,body))
+        | RpcRequestDone (peer,body) ->
+           rbus.push (BCastRunner.RpcSuccess (peer,body))
+        | RpcRequestFail peer ->
+           rbus.push (BCastRunner.RpcFailure peer)
         | NoOp -> ()
       )
   in

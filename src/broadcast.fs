@@ -36,6 +36,7 @@ open Return
 
 type Message =
   { channel : string
+  ; seq : int
   ; data : string option
   }
    
@@ -48,6 +49,8 @@ type Msg<'peer when 'peer : comparison> =
   | JoinBroadcast of string
   | LeaveBroadcast of string
   | AddNode of 'peer
+  | Success of ('peer * string * int)
+  | Failure of 'peer
 
 type PeerState<'peer when 'peer : comparison> =
   { name : 'peer ;
@@ -56,6 +59,10 @@ type PeerState<'peer when 'peer : comparison> =
 
 type BroadcastPeer<'peer> =
   { name : 'peer
+  ; inseq : int
+  ; outseq : int
+  ; outqueue : Map<int, Message>
+  ; lastping : int
   }
 
 type SideEffect<'peer> =
@@ -63,25 +70,24 @@ type SideEffect<'peer> =
   | UserMessage of Message
 
 type BroadcastInstance<'peer when 'peer : comparison> =
-  { masters : Set<'peer> ;
-    lastSeen : int ;
-    seq : int ;
-    refs : int ;
-    peers : Map<'peer, BroadcastPeer<'peer>>
+  { masters : Set<'peer>
+  ; lastSeen : int
+  ; refs : int
+  ; peers : Map<'peer, BroadcastPeer<'peer>>
   }
 
 type State<'peer when 'peer : comparison> =
-  { curTick : int ;
-    myId : 'peer option ;
-    numMasters : int ;
-    inactiveTimeout : int ;
-    alive : rbtree.Tree<'peer,PeerState<'peer>> ;
-    broadcasts : Map<string, BroadcastInstance<'peer>>
+  { curTick : int
+  ; myId : 'peer option
+  ; numMasters : int
+  ; inactiveTimeout : int
+  ; alive : rbtree.Tree<'peer,PeerState<'peer>>
+  ; broadcasts : Map<string, BroadcastInstance<'peer>>
   }
 
 let init inactiveTimeout =
   { curTick = 0 ;
-    myId = None
+    myId = None ;
     inactiveTimeout = inactiveTimeout ;
     numMasters = 3 ;
     alive = RBTree.createTree Util.strcmp ;
@@ -107,11 +113,13 @@ let stringKey channel =
   let _ = Crypto.updateBuffer (Buffer.fromString channel "utf-8") h in
   Crypto.digestHex h
 
-let encodePacketForChannel channel buf forwarded =
+let encodePacketForChannel msg forwarded =
   Serialize.jsonObject
     (List.concat
-       [ [("c", Serialize.jsonString channel)]
-       ; buf
+       [ [ ("c", Serialize.jsonString msg.channel)
+         ; ("s", Serialize.jsonInt msg.seq)
+         ]
+       ; msg.data
          |> Option.map (fun buf -> ("m", Serialize.jsonString buf))
          |> optionToList
        ; forwarded
@@ -122,7 +130,6 @@ let encodePacketForChannel channel buf forwarded =
   
 let doMastersForChannel channel (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
   let peerlist = state.alive |> RBTree.head |> RBTree.iterSeq |> List.ofSeq in
-  let _ = printfn "doMastersForChannel: %A" peerlist in  
   state.broadcasts
   |> Map.tryFind channel
   |> Option.map
@@ -132,7 +139,6 @@ let doMastersForChannel channel (state : State<'peer>) : (State<'peer> * SideEff
            RBTree.head state.alive
            |> RBTree.iterSeq
          in
-         let _ = printfn "Master candidates %A" masterCandidates in
          let masters =
            [ state.alive.lt wantKey |> RBTree.iterSeq
            ; RBTree.head state.alive |> RBTree.iterSeq
@@ -143,11 +149,10 @@ let doMastersForChannel channel (state : State<'peer>) : (State<'peer> * SideEff
            |> Seq.map fst
            |> Set.ofSeq
          in
-         let _ = printfn "Masters for %A: %A" channel masters in
          let peers =
            masters
            |> Seq.filter (fun m -> Map.tryFind m br.peers = None)
-           |> Seq.fold (fun p m -> Map.add m { name = m } p) br.peers
+           |> Seq.fold (fun p m -> Map.add m { name = m ; outseq = 0 ; outqueue = Map.empty ; inseq = -1 ; lastping = -1 } p) br.peers
          in
          let broadcast =
            { br with 
@@ -169,15 +174,21 @@ let doPingPeers
   |> Map.toSeq
   |> Seq.map
        (fun (channel,br) ->
-         let packet = encodePacketForChannel channel None None in
          br.peers
          |> Map.toSeq
          |> Seq.map
-              (fun (m,_) ->
-                if Some m <> state.myId then
-                  [OutPacket (m, packet)]
-                else
-                  []
+              (fun (m,p) ->
+                let packet =
+                  if Seq.length p.outqueue = 0 then
+                    encodePacketForChannel
+                      { channel = channel
+                      ; seq = p.outseq
+                      ; data = None
+                      } None
+                  else
+                    encodePacketForChannel
+                      (Seq.head p.outqueue |> (fun kv -> kv.Value)) None
+                [OutPacket (m, packet)]
               )
          |> Seq.toList
          |> Seq.concat
@@ -192,7 +203,6 @@ let doTick state =
 
 let indicatePeerAlive (p : 'peer) (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
   let peerlist = state.alive |> RBTree.head |> RBTree.iterSeq |> List.ofSeq in
-  let _ = printfn "indicatePeerAlive %A" peerlist in  
   (if Some p <> state.myId then
      { state with
          alive =
@@ -216,10 +226,32 @@ let indicatePeerAlive (p : 'peer) (state : State<'peer>) : (State<'peer> * SideE
   )
   |> (fun state ->
        let peerlist = state.alive |> RBTree.head |> RBTree.iterSeq |> List.ofSeq in
-       let _ = printfn "indicatePeerAlive %A" peerlist in
        state
      )
   |> Return.singleton
+
+let makePacket msg p forward = [OutPacket (p,encodePacketForChannel msg forward)]
+
+let forwardFirstMessage channel peer forward state =
+  Map.tryFind channel state.broadcasts
+  |> Option.bind
+       (fun br ->
+         Map.tryFind peer br.peers
+         |> Option.map
+              (fun p ->
+                if Seq.length p.outqueue = 1 then
+                  makePacket
+                    (Map.toSeq p.outqueue
+                     |> Seq.map snd
+                     |> Seq.head
+                    ) p.name forward
+                else
+                  []
+              )
+       )
+  |> optionDefault []
+  |> List.ofSeq
+  |> tupleSndWith state
 
 (* Using the broadcast state for the indicated channel, do one of these
  * things:
@@ -230,56 +262,123 @@ let indicatePeerAlive (p : 'peer) (state : State<'peer>) : (State<'peer> * SideE
 let forwardBroadcast
       (p : 'peer)
       (f : bool)
-      (channel : string)
-      (data : string option)
+      (msg : Message)
       (state : State<'peer>) : (State<'peer> * SideEffect<'peer> list) =
   let forward = if f then Some p else None in
-  let makePacket p =
-    [OutPacket (p,encodePacketForChannel channel data forward)]
-  in
-  state.broadcasts
-  |> Map.tryFind channel
-  |> Option.map
-       (fun br ->
-         let iAmMaster =
-           state.myId
-           |> Option.filter ((flip Set.contains) br.masters)
-           |> optionEither true false
-         in
-         (if iAmMaster then
-            br.peers
-            |> Map.toSeq
-            |> Seq.map fst
-          else if state.myId <> None then
-            br.masters
-            |> Set.toSeq
-            |> Seq.filter (fun m -> Some m <> state.myId)
-          else
-            Seq.empty
+  let internMsgToBroadcast msg state =
+    state.broadcasts
+    |> Map.tryFind msg.channel
+    |> Option.map
+         (fun br ->
+           let iAmMaster =
+             state.myId
+             |> Option.filter ((flip Set.contains) br.masters)
+             |> optionEither true false
+           in
+           (if iAmMaster then
+              br.peers
+              |> Map.toSeq
+              |> Seq.map fst
+            else if state.myId <> None then
+              br.masters
+              |> Set.toSeq
+              |> Seq.filter (fun m -> Some m <> state.myId)
+            else
+              Seq.empty
+           )
+           |> Seq.filter (fun m -> m <> p)
+           |> Seq.map (fun p -> Map.tryFind p br.peers |> optionToList)
+           |> Seq.concat
+           |> Seq.fold
+                (fun (send,br) peer ->
+                  let addMsg peer =
+                    msg.data <> None || peer.lastping <> state.curTick
+                  in
+                  let redundant = Map.tryFind msg.seq peer.outqueue <> None in
+                  let nseq peer = peer.outseq + 1 in
+                  ((if redundant then send else (peer.name :: send)),
+                   { br with
+                       peers =
+                         Map.add
+                           peer.name
+                           { peer with
+                               outseq = nseq peer ;
+                               outqueue =
+                                 (if addMsg peer then
+                                    Map.add
+                                      (nseq peer)
+                                      { msg with seq = nseq peer }
+                                      peer.outqueue
+                                  else
+                                    peer.outqueue
+                                 ) ;
+                               lastping =
+                                 if addMsg peer then
+                                   state.curTick
+                                 else
+                                   peer.lastping
+                           }
+                           br.peers
+                   }
+                  )
+                )
+                ([],br)
+           |> (fun (send,br) ->
+                ( send
+                , { state with
+                      broadcasts = Map.add msg.channel br state.broadcasts
+                  }
+                )
+              )
          )
-         |> Seq.filter (fun m -> m <> p)
-         |> Seq.map makePacket
-         |> Seq.concat
-         |> Seq.toList
-       )
-  |> Option.map (tupleSndWith state)
-  |> optionDefault (state, [])
+    |> optionDefault ([],state)
+  in
+  internMsgToBroadcast msg state
+  |> (fun (send,state) ->
+       if send <> [] then
+         forwardFirstMessage msg.channel p forward state
+       else
+         (state,[])
+     )
 
-let handlePacket p forwarded msg state =
+let isRetransmission p msg state =
+  state.broadcasts
+  |> Map.tryFind msg.channel
+  |> Option.bind
+       (fun br ->
+         Map.tryFind p br.peers |> Option.map (fun p -> p.inseq >= msg.seq)
+       )
+  |> optionDefault false
+  
+let handlePacket
+      (p : 'peer)
+      (forwarded : bool)
+      (msg : Message)
+      (state : State<'peer>) =
+  let retx = isRetransmission p msg state in
   state.broadcasts
   |> Map.tryFind msg.channel
   |> Option.map
        (fun br ->
          br.peers
          |> Map.tryFind p
-         |> Option.map (fun p -> (p,br))
-         |> optionDefault ({ name = p }, br)
+         |> Option.map
+              (fun p ->
+                if retx then (p,br) else ({ p with inseq = msg.seq }, br)
+              )
+         |> optionDefault
+              ({ name = p
+               ; outseq = 0
+               ; outqueue = Map.empty
+               ; inseq = msg.seq
+               ; lastping = state.curTick
+               }, br)
        )
   |> Option.map
-       (fun (p,br) ->
+       (fun (peer,br) ->
          { br with
              lastSeen = state.curTick ;
-             peers = Map.add p.name p br.peers
+             peers = Map.add peer.name peer br.peers
          }
        )
   |> Option.map
@@ -291,22 +390,63 @@ let handlePacket p forwarded msg state =
           { masters = Set.empty ;
             lastSeen = state.curTick ;
             refs = 0 ;
-            seq = -1 ;
-            peers = Map.add p { name = p } Map.empty
+            peers =
+              Map.add
+                p
+                { name = p
+                ; outseq = 0
+                ; outqueue = Map.empty
+                ; inseq = -1
+                ; lastping = state.curTick
+                }
+                Map.empty
           }
         in
         { state with broadcasts = Map.add msg.channel br state.broadcasts }
        )
-  |> (doMastersForChannel msg.channel)
+  |> doMastersForChannel msg.channel
   |> Return.andThen (indicatePeerAlive p)
-  |> Return.andThen (forwardBroadcast p forwarded msg.channel msg.data)
-  |> Return.command [UserMessage msg]
+  |> (fun state ->
+       if not retx then
+         Return.andThen (forwardBroadcast p forwarded msg) state
+         |> Return.command [UserMessage msg]
+       else
+         state
+     )
 
+let nextPacket p c s state =
+  state.broadcasts
+  |> Map.tryFind c
+  |> Option.map
+       (fun br ->
+         br.peers
+         |> Map.tryFind p
+         |> Option.map
+              (fun peer ->
+                let newPeer =
+                  { peer with outqueue = Map.remove s peer.outqueue }
+                in
+                { br with
+                    peers =
+                      Map.add
+                        p
+                        newPeer
+                        br.peers
+                }
+              )
+         |> optionDefault br
+       )
+  |> Option.map
+       (fun br -> { state with broadcasts = Map.add c br state.broadcasts })
+  |> optionDefault state
+  |> forwardFirstMessage c p None
+  
 let update
       (msg : Msg<'peer>)
       (state : State<'peer>) :
       (State<'peer> * SideEffect<'peer> list) =
-  match Util.log "b" msg with
+  let _ = printfn "b %A" msg in
+  match msg with
   | SetId p -> { state with myId = Some p } |> Return.singleton
   | JoinBroadcast b ->
      state.broadcasts
@@ -316,7 +456,6 @@ let update
           { masters = Set.empty ;
             lastSeen = state.curTick ;
             refs = 1 ;
-            seq = -1 ;
             peers = Map.empty
           }
      |> (fun br -> { state with broadcasts = Map.add b br state.broadcasts })
@@ -324,10 +463,7 @@ let update
      |> Return.andThen
           (fun state ->
             state.myId
-            |> Option.map
-                 (fun myid ->
-                   forwardBroadcast myid false b None state
-                 )
+            |> Option.map (fun myid -> forwardBroadcast myid false { channel = b ; seq = 0 ; data = None } state)
             |> optionDefault (state, [])
           )
   | LeaveBroadcast b ->
@@ -352,4 +488,6 @@ let update
   | InMessage (p,b) -> handlePacket p false b state
   | ForwardedMessage (p,b) -> handlePacket p true b state 
   | AddNode p -> indicatePeerAlive p state
+  | Success (p,c,s) -> nextPacket p c s state
+  | Failure p -> (state, [])
   | TimeTick -> doTick state
