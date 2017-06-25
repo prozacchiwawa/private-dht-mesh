@@ -22,6 +22,8 @@
 #load "./dhtrpc.fs"
 #load "./elm-return/respond.fs"
 #load "./elm-return/return.fs"
+#load "./broadcastdata.fs"
+#load "./broadcastinstance.fs"
 #load "./broadcast.fs"
 #load "./dhtrunner.fs"
 #load "./basicwsservice.fs"

@@ -5,6 +5,7 @@ open Buffer
 open Bacon
 open Broadcast
 open DHTData
+open BroadcastData
 
 type InternalMsg<'ws> =
   | NoOp
@@ -399,6 +400,6 @@ let update msg state =
         let pmsg = { channel = c ; seq = s ; data = None } in
         let msg = { channel = c ; seq = s ; data = m } in
         doBroadcastMsg (Broadcast.InMessage (peer,pmsg)) state
-        |> doBroadcastMsg (Broadcast.ForwardedMessage (f,msg))
+        |> doBroadcastMsg (Broadcast.ForwardedMessage (peer,f,msg))
      | _ -> state
   | _ -> state

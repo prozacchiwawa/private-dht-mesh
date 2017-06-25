@@ -5,7 +5,8 @@ open Buffer
 open MochaTest
 open DHTData
 open Broadcast
-
+open BroadcastData
+   
 type DoneF = unit -> unit
 type Test = string * (DoneF -> unit)
 
@@ -17,7 +18,7 @@ type IterateAction =
 
 type BIter =
   { broadcast : Broadcast.State<string>
-  ; events : Broadcast.SideEffect<string> list
+  ; events : SideEffect<string> list
   }
             
 let rec runIter (l : IterateAction list) (b : BIter) : BIter =
@@ -41,6 +42,7 @@ let rec applyEvents from newmsgs results bev =
   match bev with
   | (UserMessage m) :: tl -> applyEvents from newmsgs (m :: results) tl
   | (OutPacket (peer,data)) :: tl ->
+     let _ = printfn "DG %s->%s %A" from peer data in
      let mt =
        ( Serialize.field "c" data |> Option.map Serialize.asString
        , Serialize.field "s" data |> Option.bind Serialize.floor
@@ -48,8 +50,8 @@ let rec applyEvents from newmsgs results bev =
        )
      in
      match mt with
-     | (Some c, Some s, Some d) ->
-        let msg = { channel = c ; seq = s ; data = Some d } in
+     | (Some c, Some s, d) ->
+        let msg = { channel = c ; seq = s ; data = d } in
         applyEvents
           from
           (List.concat
@@ -60,7 +62,8 @@ let rec applyEvents from newmsgs results bev =
              ]
           ) results tl
      | _ -> applyEvents from newmsgs results tl
-  | _ -> (newmsgs,results)
+  | _ ->
+     (newmsgs,results)
 
 let rec beforeTick newmsgs msgs =
   match msgs with
@@ -80,7 +83,8 @@ let rec applyMessages msgs results broadcasts =
         let bev = bnew.events in
         let bnext = { bnew with events = [] } in
         let (newmsgs,results) = applyEvents tgt [] results bev in
-        applyMessages (beforeTick newmsgs tl) results broadcasts
+        let newmsgs = beforeTick newmsgs tl in
+        applyMessages newmsgs results broadcasts
      | None -> applyMessages tl results broadcasts
   | _ -> (results, broadcasts)
                         
@@ -177,7 +181,7 @@ let tests : Test list =
           |> Set.ofSeq
         in
         let _ =
-          massert.ok ((Seq.length messagesSet) = (List.length messagesList))
+          massert.ok ((3 * (Seq.length messagesSet)) = (List.length messagesList))
         in
         let _ = massert.ok (messagesSet = wantMessages) in
         donef ()

@@ -22,6 +22,8 @@
 #load "../src/dhtrpc.fs"
 #load "../src/elm-return/respond.fs"
 #load "../src/elm-return/return.fs"
+#load "../src/broadcastdata.fs"
+#load "../src/broadcastinstance.fs"
 #load "../src/broadcast.fs"
 #load "../src/bcastrunner.fs"
 #load "./mocha.fs"
@@ -38,6 +40,7 @@ open Buffer
 open MochaTest
 open Forward
 open KBucket
+open BroadcastData
 
 type DoneF = unit -> unit
 type It = string * (DoneF -> unit)
