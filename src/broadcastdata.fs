@@ -1,38 +1,142 @@
 module BroadcastData
 
 open Util
-   
-type ForwardKind = Originated | Forwarded of string | Received
-   
-type Message =
-  { channel : string
-  ; seq : int
-  ; data : string option
+
+type UserMsg =
+  { channel : string ; data : string }
+
+type SubMsg<'peer> =
+  { peer : 'peer ; channel : string }
+  
+type PrimaryMsg<'peer> =
+  { seq : int ; peer : 'peer ; channel : string ; oseq : int ; data : string }
+
+type FwdMsg<'peer> =
+  { seq : int
+  ; op : 'peer
+  ; peer : 'peer
+  ; channel : string
+  ; oseq : int
+  ; data : string
   }
 
+type DelMsg<'peer> = FwdMsg<'peer>
+
+type Message<'peer> =
+  | Ping of SubMsg<'peer>
+  | Primary of PrimaryMsg<'peer>
+  | M2M of FwdMsg<'peer>
+  | P2M of FwdMsg<'peer>
+  | Delivery of DelMsg<'peer>
+
+type Msg<'peer> =
+  | SetId of 'peer
+  | TimeTick
+  | InPacket of ('peer * Serialize.Json)
+  | InUserMessage of (string * string)
+  | JoinBroadcast of string
+  | LeaveBroadcast of string
+  | SetMasters of 'peer list
+                    
 type SideEffect<'peer> =
   | OutPacket of ('peer * Serialize.Json)
-  | UserMessage of Message
+  | UserMessage of UserMsg
 
+let encodePacket msg =
+  match msg with
+  | Ping msg ->
+     Serialize.jsonObject
+       [| ("c", Serialize.jsonString msg.channel)
+       |]
+  | Primary msg ->
+     Serialize.jsonObject
+       [| ("t", Serialize.jsonInt 1)
+        ; ("c", Serialize.jsonString msg.channel)
+        ; ("m", Serialize.jsonString msg.data)
+        ; ("o", Serialize.jsonInt msg.oseq)
+        ; ("s", Serialize.jsonInt msg.seq)
+       |]
+  | M2M msg ->
+     Serialize.jsonObject
+       [| ("t", Serialize.jsonInt 2)
+        ; ("c", Serialize.jsonString msg.channel)
+        ; ("m", Serialize.jsonString msg.data)
+        ; ("o", Serialize.jsonInt msg.oseq)
+        ; ("s", Serialize.jsonInt msg.seq)
+        ; ("z", Serialize.jsonString msg.op)
+       |]
+  | P2M msg ->
+     Serialize.jsonObject
+       [| ("t", Serialize.jsonInt 3)
+        ; ("c", Serialize.jsonString msg.channel)
+        ; ("m", Serialize.jsonString msg.data)
+        ; ("o", Serialize.jsonInt msg.oseq)
+        ; ("s", Serialize.jsonInt msg.seq)
+        ; ("z", Serialize.jsonString msg.op)
+       |]
+  | Delivery msg ->
+     Serialize.jsonObject
+       [| ("t", Serialize.jsonInt 4)
+        ; ("c", Serialize.jsonString msg.channel)
+        ; ("m", Serialize.jsonString msg.data)
+        ; ("o", Serialize.jsonInt msg.oseq)
+        ; ("s", Serialize.jsonInt msg.seq)
+        ; ("z", Serialize.jsonString msg.op)
+       |]
+
+let decodePacket p j =
+  let mt = 
+    (Serialize.field "c" j |> Option.map Serialize.asString
+    , (Serialize.field "m" j |> Option.map Serialize.asString
+      , (Serialize.field "s" j |> Option.bind Serialize.floor
+        , (Serialize.field "t" j |> Option.bind Serialize.floor
+          , ( Serialize.field "o" j |> Option.bind Serialize.floor
+            , Serialize.field "z" j |> Option.map Serialize.asString
+            )
+          )
+        )
+      )
+    )
+  in
+  match mt with
+  | (Some c, (Some m, (Some s, (Some 1, (Some o, _))))) ->
+     Primary
+       { seq = s
+       ; channel = c
+       ; peer = p
+       ; data = m
+       ; oseq = o
+       }
+  | (Some c, (Some m, (Some s, (Some 2, (Some o, Some z))))) ->
+     M2M
+       { seq = s
+       ; channel = c
+       ; peer = p
+       ; data = m
+       ; oseq = o
+       ; op = z
+       }
+  | (Some c, (Some m, (Some s, (Some 3, (Some o, Some z))))) ->
+     P2M
+       { seq = s
+       ; channel = c
+       ; peer = p
+       ; data = m
+       ; oseq = o
+       ; op = z
+       }
+  | (Some c, (Some m, (Some s, (Some 4, (Some o, Some z))))) ->
+     Delivery
+       { seq = s
+       ; channel = c
+       ; peer = p
+       ; data = m
+       ; oseq = o
+       ; op = z
+       }
+  | (Some c, _) -> Ping { channel = c ; peer = p }
+    
 let stringKey channel =
   let h = Crypto.createHash "sha256" in
   let _ = Crypto.updateBuffer (Buffer.fromString channel "utf-8") h in
   Crypto.digestHex h
-
-let encodePacketForChannel msg forwarded =
-  Serialize.jsonObject
-    (List.concat
-       [ [ ("c", Serialize.jsonString msg.channel)
-         ; ("s", Serialize.jsonInt msg.seq)
-         ]
-       ; msg.data
-         |> Option.map (fun buf -> ("m", Serialize.jsonString buf))
-         |> optionToList
-       ; forwarded
-         |> Option.map (fun from -> ("f", Serialize.jsonString from))
-         |> optionToList
-       ] |> Array.ofSeq
-    )
-
-let makePacket (msg : Message) (p : string) (forward : string option) =
-  [OutPacket (p,encodePacketForChannel msg forward)]

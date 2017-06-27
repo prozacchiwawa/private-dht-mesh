@@ -42,7 +42,7 @@ let asString : Json -> string = fun j -> failwith "JS"
 [<Emit("(function(obj) { return Object.keys(obj).map(function(k) { return [k,obj[k]]; }); })($0)")>]
 let explode : Json -> (string * Json) array = fun o -> failwith "JS"
 
-[<Emit("(function(n,o) { if (o[n]) { return o[n]; } else { return null; } })($0,$1)")>]
+[<Emit("(function(n,o) { if (o[n] !== undefined && o[n] !== null) { return o[n]; } else { return null; } })($0,$1)")>]
 let field : string -> Json -> Json option = fun n o -> failwith "JS"
 
 [<Emit("(function(n,o) { while (n.length != 0) { if (o && o[n[0]]) { o = o[n[0]]; } else { o = null; } n = n.slice(1); } })($0,$1)")>]

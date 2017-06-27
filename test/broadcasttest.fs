@@ -14,7 +14,7 @@ let (=>) (a : string) (b : 'b) : (string * 'b) = (a,b)
 
 type IterateAction =
   | Wait of int
-  | Do of Broadcast.Msg<string>
+  | Do of BroadcastData.Msg<string>
 
 type BIter =
   { broadcast : Broadcast.State<string>
@@ -26,42 +26,38 @@ let rec runIter (l : IterateAction list) (b : BIter) : BIter =
   | [] -> b
   | (Wait 0) :: tl -> runIter tl b
   | (Wait n) :: tl ->
-     let (newb,beff) = Broadcast.update (Broadcast.TimeTick) b.broadcast in
+     let _ = printfn "%A -> peers of foo: %A" b.broadcast.myId (Broadcast.peersOfChannel "foo" b.broadcast) in
+     let (newb,beff) = Broadcast.update (BroadcastData.TimeTick) b.broadcast in
+     let _ = printfn "%A <- peers of foo: %A" newb.myId (Broadcast.peersOfChannel "foo" newb) in
      runIter
        ((Wait (n-1)) :: tl)
        { b with broadcast = newb ; events = beff @ b.events }
   | (Do msg) :: tl ->
+     let _ = printfn "%A -> peers of foo: %A" b.broadcast.myId (Broadcast.peersOfChannel "foo" b.broadcast) in
      let (newb,beff) = Broadcast.update msg b.broadcast in
+     let _ = printfn "%A <- peers of foo: %A" newb.myId (Broadcast.peersOfChannel "foo" newb) in
      runIter
        tl
        { b with broadcast = newb ; events = beff @ b.events }
 
 let startIter broadcast = { broadcast = broadcast ; events = [] }
 
-let rec applyEvents from newmsgs results bev =
+let rec applyEvent from newmsgs results bev =
   match bev with
-  | (UserMessage m) :: tl -> applyEvents from newmsgs (m :: results) tl
+  | (UserMessage m) :: tl -> applyEvent from newmsgs (m :: results) tl
   | (OutPacket (peer,data)) :: tl ->
-     let _ = printfn "DG %s->%s %A" from peer data in
-     let mt =
-       ( Serialize.field "c" data |> Option.map Serialize.asString
-       , Serialize.field "s" data |> Option.bind Serialize.floor
-       , Serialize.field "m" data |> Option.map Serialize.asString
-       )
-     in
-     match mt with
-     | (Some c, Some s, d) ->
-        let msg = { channel = c ; seq = s ; data = d } in
-        applyEvents
-          from
-          (List.concat
-             [ newmsgs
-             ; [ (peer, Do (InMessage (from,msg)))
-               ; (from, Do (Success (peer,msg.channel,msg.seq)))
-               ]
-             ]
-          ) results tl
-     | _ -> applyEvents from newmsgs results tl
+     match Serialize.field "c" data |> Option.map Serialize.asString with
+     | Some c ->
+        let nev =
+          List.concat
+            [ [ (peer, Do (InPacket (from,data)))
+              ]
+            ; newmsgs
+            ]
+        in
+        let _ = printfn "DG %A->%A %A" from peer data in
+        applyEvent from nev results tl
+     | _ -> applyEvent from newmsgs results tl
   | _ ->
      (newmsgs,results)
 
@@ -80,11 +76,11 @@ let rec applyMessages msgs results broadcasts =
      match Map.tryFind tgt broadcasts with
      | Some b ->
         let bnew = runIter [msg] b in
-        let bev = bnew.events in
         let bnext = { bnew with events = [] } in
-        let (newmsgs,results) = applyEvents tgt [] results bev in
-        let newmsgs = beforeTick newmsgs tl in
-        applyMessages newmsgs results broadcasts
+        let (newmsgs,results) = applyEvent tgt [] results bnew.events in
+        let m = beforeTick (List.rev newmsgs) tl in
+        let nbroadcasts = Map.add tgt bnext broadcasts in
+        applyMessages m results nbroadcasts
      | None -> applyMessages tl results broadcasts
   | _ -> (results, broadcasts)
                         
@@ -98,7 +94,7 @@ let tests : Test list =
           |> startIter
           |> runIter
                [ Do (SetId "our-node")
-               ; Do (AddNode "other-node")
+               ; Do (SetMasters ["their-node"])
                ; Wait 1
                ; Do (JoinBroadcast "foo")
                ; Wait 5
@@ -125,8 +121,7 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "0")
-                   ; Do (AddNode "1")
-                   ; Do (AddNode "2")
+                   ; Do (SetMasters ["0"])
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -135,8 +130,7 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "1")
-                   ; Do (AddNode "0")
-                   ; Do (AddNode "2")
+                   ; Do (SetMasters ["0"])
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -145,8 +139,7 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "2")
-                   ; Do (AddNode "0")
-                   ; Do (AddNode "1")
+                   ; Do (SetMasters ["0"])
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -156,9 +149,9 @@ let tests : Test list =
         for i in 0 .. 299 do
           let msgs =
             if (i - 20) % 100 = 0 then
-              [ ("0", Do (OutMessage { channel = "foo"; seq = -1 ; data = Some (sprintf "0 %d" i) }))
-              ; ("1", Do (OutMessage { channel = "foo"; seq = -1 ; data = Some (sprintf "1 %d" i) }))
-              ; ("2", Do (OutMessage { channel = "foo"; seq = -1 ; data = Some (sprintf "2 %d" i) }))
+              [ ("0", Do (InUserMessage ("foo", sprintf "0 %d" i)))
+              ; ("1", Do (InUserMessage ("foo", sprintf "1 %d" i)))
+              ; ("2", Do (InUserMessage ("foo", sprintf "2 %d" i)))
               ; ("0", Wait 1)
               ; ("1", Wait 1)
               ; ("2", Wait 1)
@@ -170,18 +163,122 @@ let tests : Test list =
           results := r ;
           broadcasts := b
         done ;
-        let _ = printfn "results %A" !results in
         let messagesList =
           !results
-          |> List.map (fun m -> m.data |> optionDefault "")
+          |> List.map (fun m -> m.data)
         in
-        let messagesSet = Set.ofSeq messagesList in
+        let messagesSet = messagesList |> Set.ofSeq in
         let wantMessages =
           ["0 20";"1 20";"2 20";"0 120";"1 120";"2 120";"0 220";"1 220";"2 220"]
           |> Set.ofSeq
         in
+        let slen = Seq.length messagesSet in
+        let mlen = List.length messagesList in
+        let _ = printfn "results %A" messagesList in
+        let _ = massert.ok ((3 * slen) = mlen) in
+        let _ = massert.ok (messagesSet = wantMessages) in
+        donef ()
+  ; "should broadcast a datagram to 6 peers under ideal conditions" =>
+      fun donef ->
+        let broadcasts =
+          [
+            ( "0"
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId "0")
+                   ; Do (SetMasters ["2";"3"])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( "1"
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId "1")
+                   ; Do (SetMasters ["2";"3"])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( "2"
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId "2")
+                   ; Do (SetMasters ["2";"3"])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( "3"
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId "3")
+                   ; Do (SetMasters ["2";"3"])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( "4"
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId "4")
+                   ; Do (SetMasters ["2";"3"])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( "5"
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId "5")
+                   ; Do (SetMasters ["2";"3"])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ] |> Map.ofSeq |> ref
+        in
+        let results = ref [] in
+        for i in 0 .. 299 do
+          let msgs =
+            if (i - 20) % 100 = 0 then
+              [ ("0", Do (InUserMessage ("foo", sprintf "0 %d" i)))
+              ; ("1", Do (InUserMessage ("foo", sprintf "1 %d" i)))
+              ; ("2", Do (InUserMessage ("foo", sprintf "2 %d" i)))
+              ; ("3", Do (InUserMessage ("foo", sprintf "3 %d" i)))
+              ; ("4", Do (InUserMessage ("foo", sprintf "4 %d" i)))
+              ; ("5", Do (InUserMessage ("foo", sprintf "5 %d" i)))
+              ; ("0", Wait 1)
+              ; ("1", Wait 1)
+              ; ("2", Wait 1)
+              ; ("3", Wait 1)
+              ; ("4", Wait 1)
+              ; ("5", Wait 1)
+              ]
+            else
+              [("0", Wait 1); ("1", Wait 1); ("2", Wait 1);
+               ("3", Wait 1); ("4", Wait 1); ("5", Wait 1)]
+          in
+          let (r,b) = applyMessages msgs !results !broadcasts in
+          results := r ;
+          broadcasts := b
+        done ;
+        let messagesList =
+          !results
+          |> List.map (fun m -> m.data)
+        in
+        let messagesSet = Set.ofSeq messagesList in
+        let wantMessages =
+          ["0 20";"1 20";"2 20";"0 120";"1 120";"2 120";"0 220";"1 220";"2 220";
+           "3 20";"4 20";"5 20";"3 120";"4 120";"5 120";"3 220";"4 220";"5 220"]
+          |> Set.ofSeq
+        in
+        let gotlen = List.length messagesList in
+        let setlen = Seq.length messagesSet in
+        let _ = printfn "results: got %A want %A" gotlen setlen in
+        let _ = printfn "raw-recv: %A" messagesList in
         let _ =
-          massert.ok ((3 * (Seq.length messagesSet)) = (List.length messagesList))
+          massert.ok ((6 * (Seq.length messagesSet)) = (List.length messagesList))
         in
         let _ = massert.ok (messagesSet = wantMessages) in
         donef ()

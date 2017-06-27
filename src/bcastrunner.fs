@@ -155,25 +155,20 @@ let applyBroadcastEff eff state =
   | OutPacket (peer,body) ->
      { state with events = (RpcRequest (peer,body)) :: state.events }
   | UserMessage msg ->
-     let (channel,data,targets) =
-       msg.data
-       |> Option.bind
-            (fun data ->
-              Map.tryFind msg.channel state.membership
-              |> Option.map (fun s -> (msg.channel, data, s))
-            )
-       |> optionDefault (msg.channel, "", Set.empty)
+     let targets =
+       Map.tryFind msg.channel state.membership
+       |> optionDefault Set.empty
      in
      let outmsgs =
        targets
        |> Seq.map
             (fun (wsid,sid) ->
-              let dataBuf = Buffer.fromString data "utf-8" in
+              let dataBuf = Buffer.fromString msg.data "utf-8" in
               let fullMsg =
                 String.concat
                   ""
-                  [ "MSG " ; channel ; " " ; sid ; " "
-                  ; string (Buffer.length dataBuf) ; "\r\n" ; data ; "\r\n"
+                  [ "MSG " ; msg.channel ; " " ; sid ; " "
+                  ; string (Buffer.length dataBuf) ; "\r\n" ; msg.data ; "\r\n"
                   ]
               in
               WSSend (wsid, fullMsg)
@@ -192,12 +187,6 @@ let doBroadcastMsg msg state =
     e
   
 let doPublish wsid pub subj replyto bytesStr state =
-  let msgFromPublished p =
-    { channel = p.subj
-    ; seq = -1
-    ; data = Some p.msg
-    }
-  in
   let mt = (Util.parseInt bytesStr, Map.tryFind wsid state.clients) in
   let _ = printfn "doPublish1 %A" mt in
   (match mt with
@@ -207,12 +196,8 @@ let doPublish wsid pub subj replyto bytesStr state =
   |> Option.bind (fun (n,client) -> chopBytes (n + 2) client)
   |> Option.map
        (fun (buf,client) ->
-         let bufNaked = Buffer.slice 0 ((Buffer.length buf) - 2) buf in
-         let msg =
-           { subj = subj ; reply = replyto ; msg = Buffer.toString "utf-8" buf }
-         in
          doBroadcastMsg
-           (OutMessage (msgFromPublished msg))
+           (InUserMessage (subj,Buffer.toString "utf-8" buf))
            { state with clients = Map.add wsid client state.clients }
        )
   |> optionDefault (clientError wsid "error parsing bytes" state)
@@ -222,7 +207,7 @@ let doSubscribe wsid sid subj state =
   let newSet = Set.add (wsid,sid) subSet in
   let state =
     if Set.isEmpty subSet then
-      doBroadcastMsg (Broadcast.JoinBroadcast subj) state
+      doBroadcastMsg (JoinBroadcast subj) state
     else
       state
   in
@@ -240,7 +225,7 @@ let doUnsubscribe (wsid : string) (sid : string) (subj : string) (state : Model<
   in
   if Set.isEmpty newSet then
     begin
-      let state = doBroadcastMsg (Broadcast.LeaveBroadcast subj) state in
+      let state = doBroadcastMsg (LeaveBroadcast subj) state in
       { state with
           subids = Map.remove (wsid,sid) state.subids ;
           membership = Map.remove subj state.membership
@@ -356,9 +341,7 @@ let init _ : Model<'a> =
 let update msg state =
   match Util.log "bcast-msg" msg with
   | SetId id ->
-     doBroadcastMsg (Broadcast.SetId id) state
-  | AddNode nid ->
-     doBroadcastMsg (Broadcast.AddNode (Buffer.toString "hex" nid.id)) state
+     doBroadcastMsg (BroadcastData.SetId id) state
   | NewSocket (wsid,ws) ->
      newSocket wsid ws state
   | SocketClosed wsid ->
@@ -371,35 +354,9 @@ let update msg state =
        |> Seq.map (fun (k,v) -> WSSend (k, "PING\r\n"))
        |> List.ofSeq
      in
-     doBroadcastMsg Broadcast.TimeTick { state with events = events @ state.events }
-  | RpcSuccess (peer,body) ->
-     let mt =
-       ( Serialize.field "c" body |> Option.map Serialize.asString
-       , Serialize.field "s" body |> Option.bind Serialize.floor
-       )
-     in
-     match mt with
-     | (Some c, Some s) ->
-        doBroadcastMsg (Broadcast.Success (peer,c,s)) state
-     | _ -> state
-  | RpcFailure peer ->
-     doBroadcastMsg (Broadcast.Failure peer) state
+     doBroadcastMsg
+       BroadcastData.TimeTick { state with events = events @ state.events }
+  | RpcSuccess (peer,body) -> state
   | RpcRequestIn (peer,body) ->
-     let mt =
-       ( Serialize.field "c" body |> Option.map Serialize.asString
-       , Serialize.field "s" body |> Option.bind Serialize.floor
-       , Serialize.field "m" body |> Option.map Serialize.asString
-       , Serialize.field "f" body |> Option.map Serialize.asString
-       )
-     in
-     match mt with
-     | (Some c, Some s, m, None) ->
-        let msg = { channel = c ; seq = s ; data = m } in
-        doBroadcastMsg (Broadcast.InMessage (peer,msg)) state
-     | (Some c, Some s, m, Some f) ->
-        let pmsg = { channel = c ; seq = s ; data = None } in
-        let msg = { channel = c ; seq = s ; data = m } in
-        doBroadcastMsg (Broadcast.InMessage (peer,pmsg)) state
-        |> doBroadcastMsg (Broadcast.ForwardedMessage (peer,f,msg))
-     | _ -> state
+     doBroadcastMsg (BroadcastData.InPacket (peer,body)) state
   | _ -> state
