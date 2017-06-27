@@ -86,6 +86,37 @@ let withChannel channel f state =
   | None -> Return.singleton state
   
 let update msg state =
+  let _ = printfn "b %A" msg in
   match msg with
-  | SetId id -> ({ state with myId = Some id }, [])
-  (state, [])
+  | SetId id ->
+     let _ = printfn "set id %A?" id in
+     ({ state with myId = Some id }, [])
+  | JoinBroadcast c ->
+     withChannel
+       c (fun id st br -> BroadcastInstance.doIntroduction st.curTick br) state
+  | SetMasters (c,m) ->
+     withChannel
+       c (fun id st br -> BroadcastInstance.setMasters st.curTick m br) state
+  | InUserMessage (c,text) ->
+     withChannel
+       c (fun id st br -> BroadcastInstance.doPublish id st.curTick text br) state
+  | InPacket (peer,body) ->
+     decodePacket peer body
+     |> Option.bind
+          (fun msg ->
+            Serialize.field "c" body
+            |> Option.map Serialize.asString
+            |> Option.map (fun c -> (c,msg))
+          )
+     |> Option.map
+          (fun (c,msg) ->
+            withChannel
+              c
+              (fun id st br ->
+                BroadcastInstance.receivePacket id st.curTick msg br
+              )
+              state
+          )
+     |> optionDefault (state, [])
+  | _ -> (state, [])
+      

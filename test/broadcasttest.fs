@@ -35,6 +35,7 @@ let rec runIter (l : IterateAction list) (b : BIter) : BIter =
   | (Do msg) :: tl ->
      let _ = printfn "%A -> peers of foo: %A" b.broadcast.myId (Broadcast.peersOfChannel "foo" b.broadcast) in
      let (newb,beff) = Broadcast.update msg b.broadcast in
+     let _ = printfn "%A eff %A" newb.myId beff in
      let _ = printfn "%A <- peers of foo: %A" newb.myId (Broadcast.peersOfChannel "foo" newb) in
      runIter
        tl
@@ -46,6 +47,7 @@ let rec applyEvent from newmsgs results bev =
   match bev with
   | (UserMessage m) :: tl -> applyEvent from newmsgs (m :: results) tl
   | (OutPacket (peer,data)) :: tl ->
+     let _ = printfn "DG %A->%A %A" from peer data in
      match Serialize.field "c" data |> Option.map Serialize.asString with
      | Some c ->
         let nev =
@@ -55,7 +57,6 @@ let rec applyEvent from newmsgs results bev =
             ; newmsgs
             ]
         in
-        let _ = printfn "DG %A->%A %A" from peer data in
         applyEvent from nev results tl
      | _ -> applyEvent from newmsgs results tl
   | _ ->
@@ -94,7 +95,7 @@ let tests : Test list =
           |> startIter
           |> runIter
                [ Do (SetId "our-node")
-               ; Do (SetMasters ["their-node"])
+               ; Do (SetMasters ("foo",["their-node"]))
                ; Wait 1
                ; Do (JoinBroadcast "foo")
                ; Wait 5
@@ -121,8 +122,8 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "0")
-                   ; Do (SetMasters ["0"])
                    ; Do (JoinBroadcast "foo")
+                   ; Do (SetMasters ("foo",["0"]))
                    ]
             )
           ; ( "1"
@@ -130,8 +131,8 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "1")
-                   ; Do (SetMasters ["0"])
                    ; Do (JoinBroadcast "foo")
+                   ; Do (SetMasters ("foo",["0"]))
                    ]
             )
           ; ( "2"
@@ -139,8 +140,8 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "2")
-                   ; Do (SetMasters ["0"])
                    ; Do (JoinBroadcast "foo")
+                   ; Do (SetMasters ("foo",["0"]))
                    ]
             )
           ] |> Map.ofSeq |> ref
@@ -187,7 +188,7 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "0")
-                   ; Do (SetMasters ["2";"3"])
+                   ; Do (SetMasters ("foo",["2";"3"]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -196,7 +197,7 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "1")
-                   ; Do (SetMasters ["2";"3"])
+                   ; Do (SetMasters ("foo",["2";"3"]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -205,7 +206,7 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "2")
-                   ; Do (SetMasters ["2";"3"])
+                   ; Do (SetMasters ("foo",["2";"3"]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -214,7 +215,7 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "3")
-                   ; Do (SetMasters ["2";"3"])
+                   ; Do (SetMasters ("foo",["2";"3"]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -223,7 +224,7 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "4")
-                   ; Do (SetMasters ["2";"3"])
+                   ; Do (SetMasters ("foo",["2";"3"]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -232,7 +233,7 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId "5")
-                   ; Do (SetMasters ["2";"3"])
+                   ; Do (SetMasters ("foo",["2";"3"]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
