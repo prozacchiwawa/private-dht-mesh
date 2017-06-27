@@ -36,21 +36,21 @@ let defChannel channel tick =
     seq = 0
   }
 
-let setMasters tick m br =
-  if br.lastintroduced <> tick && (Seq.length m) <> 0 then
-    let effects =
+let setMasters id tick m br =
+  let effects =
+    if br.lastintroduced <> tick && (Seq.length m) <> 0 then
       m |> List.map
              (fun p ->
                let encoded =
-                 encodePacket (Ping { op = p ; peer = p ; channel = br.channel })
+                 encodePacket (Ping { op = id ; peer = id ; channel = br.channel })
                in
                OutPacket (p,encoded)
              )
-    in
-    let _ = printfn "setMasters %A" m in
-    ({ br with lastintroduced = tick ; masters = m |> Set.ofSeq }, effects)
-  else
-    (br, [])
+    else
+      []
+  in
+  let _ = printfn "setMasters %A" m in
+  ({ br with lastintroduced = tick ; masters = m |> Set.ofSeq }, effects)
   
 let withPeer tick p f br =
   let defaultPeer = (initPeer tick p) in
@@ -65,11 +65,11 @@ let withPeer tick p f br =
          br
        )
 
-let doIntroduction tick br =
+let doIntroduction id tick br =
   let effects = 
     Seq.map
       (fun p ->
-        OutPacket (p,encodePacket (Ping { op = p ; channel = br.channel ; peer = p }))
+        OutPacket (p,encodePacket (Ping { op = id ; channel = br.channel ; peer = id }))
       )
       br.masters
     |> List.ofSeq
@@ -119,8 +119,9 @@ let receivePacket id tick msg br : (BroadcastInstance<'peer> * SideEffect<'peer>
   | Ping msg ->
      (* Ping from this host *)
      withPeer
-       tick msg.peer
+       tick msg.op
        (fun peer br ->
+         let _ = printfn "%A ping from %A" id peer in
          if Set.contains id br.masters then
            ({ peer with lastping = tick }, [])
          else

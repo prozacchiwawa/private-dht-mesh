@@ -93,10 +93,10 @@ let update msg state =
      ({ state with myId = Some id }, [])
   | JoinBroadcast c ->
      withChannel
-       c (fun id st br -> BroadcastInstance.doIntroduction st.curTick br) state
+       c (fun id st br -> BroadcastInstance.doIntroduction id st.curTick br) state
   | SetMasters (c,m) ->
      withChannel
-       c (fun id st br -> BroadcastInstance.setMasters st.curTick m br) state
+       c (fun id st br -> BroadcastInstance.setMasters id st.curTick m br) state
   | InUserMessage (c,text) ->
      withChannel
        c (fun id st br -> BroadcastInstance.doPublish id st.curTick text br) state

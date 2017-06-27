@@ -59,6 +59,8 @@ let rec applyEvent from newmsgs results bev =
         in
         applyEvent from nev results tl
      | _ -> applyEvent from newmsgs results tl
+  | _ :: tl ->
+     applyEvent from newmsgs results tl
   | _ ->
      (newmsgs,results)
 
