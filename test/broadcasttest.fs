@@ -26,17 +26,17 @@ let rec runIter (l : IterateAction list) (b : BIter) : BIter =
   | [] -> b
   | (Wait 0) :: tl -> runIter tl b
   | (Wait n) :: tl ->
-     let _ = printfn "%A -> peers of foo: %A" b.broadcast.myId (Broadcast.peersOfChannel "foo" b.broadcast) in
+     (* let _ = printfn "%A -> peers of foo: %A" b.broadcast.myId (Broadcast.peersOfChannel "foo" b.broadcast) in *)
      let (newb,beff) = Broadcast.update (BroadcastData.TimeTick) b.broadcast in
-     let _ = printfn "%A <- peers of foo: %A" newb.myId (Broadcast.peersOfChannel "foo" newb) in
+     (* let _ = printfn "%A <- peers of foo: %A" newb.myId (Broadcast.peersOfChannel "foo" newb) in *)
      runIter
        ((Wait (n-1)) :: tl)
        { b with broadcast = newb ; events = beff @ b.events }
   | (Do msg) :: tl ->
-     let _ = printfn "%A -> peers of foo: %A" b.broadcast.myId (Broadcast.peersOfChannel "foo" b.broadcast) in
+     (* let _ = printfn "%A -> peers of foo: %A" b.broadcast.myId (Broadcast.peersOfChannel "foo" b.broadcast) in *)
      let (newb,beff) = Broadcast.update msg b.broadcast in
-     let _ = printfn "%A eff %A" newb.myId beff in
-     let _ = printfn "%A <- peers of foo: %A" newb.myId (Broadcast.peersOfChannel "foo" newb) in
+     let _ = printfn "%A eff %A" (newb.myId |> Option.map (fun i -> i.id)) beff in
+     (* let _ = printfn "%A <- peers of foo: %A" newb.myId (Broadcast.peersOfChannel "foo" newb) in *)
      runIter
        tl
        { b with broadcast = newb ; events = beff @ b.events }
@@ -132,7 +132,8 @@ let tests : Test list =
               |> runIter
                    [ Do (SetId keys.[0])
                    ; Do (JoinBroadcast "foo")
-                   ; Do (SetMasters ("foo",[keys.[0]]))
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[2])
                    ]
             )
           ; ( keys.[1]
@@ -141,7 +142,8 @@ let tests : Test list =
               |> runIter
                    [ Do (SetId keys.[1])
                    ; Do (JoinBroadcast "foo")
-                   ; Do (SetMasters ("foo",[keys.[0]]))
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[2])
                    ]
             )
           ; ( keys.[2]
@@ -150,7 +152,8 @@ let tests : Test list =
               |> runIter
                    [ Do (SetId keys.[2])
                    ; Do (JoinBroadcast "foo")
-                   ; Do (SetMasters ("foo",[keys.[0]]))
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[2])
                    ]
             )
           ] |> Map.ofSeq |> ref
@@ -202,7 +205,11 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId keys.[0])
-                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[2])
+                   ; Do (AddNode keys.[3])
+                   ; Do (AddNode keys.[4])
+                   ; Do (AddNode keys.[5])
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -211,7 +218,11 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId keys.[1])
-                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[2])
+                   ; Do (AddNode keys.[3])
+                   ; Do (AddNode keys.[4])
+                   ; Do (AddNode keys.[5])
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -220,7 +231,11 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId keys.[2])
-                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[3])
+                   ; Do (AddNode keys.[4])
+                   ; Do (AddNode keys.[5])
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -229,7 +244,11 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId keys.[3])
-                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[2])
+                   ; Do (AddNode keys.[4])
+                   ; Do (AddNode keys.[5])
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -238,7 +257,11 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId keys.[4])
-                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[2])
+                   ; Do (AddNode keys.[3])
+                   ; Do (AddNode keys.[5])
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -247,7 +270,11 @@ let tests : Test list =
               |> startIter
               |> runIter
                    [ Do (SetId keys.[5])
-                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[2])
+                   ; Do (AddNode keys.[3])
+                   ; Do (AddNode keys.[4])
                    ; Do (JoinBroadcast "foo")
                    ]
             )

@@ -59,11 +59,6 @@ let withPeer tick p f br =
   f peer br
   |> Return.map
        (fun newPeer -> { br with peers = Map.add newPeer.name newPeer br.peers })
-  |> Return.map
-       (fun br ->
-         let _ = printfn "withPeer after %A" (br.peers |> Map.toSeq |> Seq.map fst) in
-         br
-       )
 
 let doIntroduction id tick br =
   let effects = 
@@ -125,7 +120,7 @@ let doMasters (id : string) (peers : string array) br =
       newMasters
     |> List.ofSeq
   in
-  ({br with masters = Set.ofSeq newMasters }, pings)
+  ({br with masters = Set.ofSeq peers }, pings)
   
 let receivePacket id tick msg br : (BroadcastInstance<'peer> * SideEffect<'peer> list) =
   match msg with
@@ -137,7 +132,7 @@ let receivePacket id tick msg br : (BroadcastInstance<'peer> * SideEffect<'peer>
          let _ = printfn "%A ping from %A" id peer in
          if Set.contains id br.masters then
            ({ peer with lastping = tick }, [])
-         else
+         else if peer.lastping <> tick then
            let effects =
              br.masters
              |> Seq.filter (fun m -> m <> id)
@@ -148,6 +143,8 @@ let receivePacket id tick msg br : (BroadcastInstance<'peer> * SideEffect<'peer>
              |> List.ofSeq
            in
            ({ peer with lastping = tick }, effects)
+         else
+           (peer, [])
        )
        br
   | Primary msg ->
@@ -208,10 +205,18 @@ let receivePacket id tick msg br : (BroadcastInstance<'peer> * SideEffect<'peer>
        (fun peer br ->
          let effects =
            if msg.seq > peer.bseq then
-             br.masters
-             |> Seq.filter (fun m -> m <> id)
-             |> Seq.map (fun m -> OutPacket (m, encodePacket (P2M msg)))
-             |> List.ofSeq
+             if Set.contains id br.masters then
+               br.peers
+               |> Map.toSeq
+               |> Seq.map (fun (k,_) -> k)
+               |> Seq.filter (fun m -> m <> id)
+               |> Seq.map (fun m -> OutPacket (m, encodePacket (Delivery msg)))
+               |> List.ofSeq               
+             else
+               br.masters
+               |> Seq.filter (fun m -> m <> id)
+               |> Seq.map (fun m -> OutPacket (m, encodePacket (P2M msg)))
+               |> List.ofSeq
            else
              []
          in

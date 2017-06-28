@@ -89,6 +89,7 @@ let doExpireBroadcasts state =
   |> Return.singleton
 
 let withChannel channel f state =
+  let haveChannel = Map.containsKey channel state.broadcasts in
   let br =
     Map.tryFind channel state.broadcasts
     |> optionDefault (defChannel channel state.curTick)
@@ -97,6 +98,25 @@ let withChannel channel f state =
   match state.myId with
   | Some id ->
      f id.id state br
+     |> Return.andThen
+          (fun br ->
+            if haveChannel then
+              (br,[])
+            else
+              let peerBuckets = id.peers in
+              let channelId = stringKey br.channel in
+              let peers =
+                KBucket.closest
+                  kbOps
+                  peerBuckets
+                  (Buffer.fromString channelId "hex")
+                  numMasters
+                  None
+                |> Array.map (Buffer.toString "hex")
+              in
+              let _ = printfn "Computed masters: %A" peers in
+              BroadcastInstance.doMasters id.id peers br
+          )
      |> Return.map
           (fun br ->
             { state with broadcasts = Map.add br.channel br state.broadcasts }
@@ -139,12 +159,12 @@ let doMasters state =
        )
   |> optionDefault (state, [])
   
-let update msg state =
+let rec update msg state =
   let _ = printfn "b %A" msg in
   match msg with
   | SetId id ->
-     let _ = printfn "set id %A?" id in
      ({ state with myId = Some { id = id ; peers = KBucket.init (Buffer.fromString id "hex") } }, [])
+     |> Return.andThen (update (AddNode id))
   | JoinBroadcast c ->
      withChannel
        c (fun id st br -> BroadcastInstance.doIntroduction id st.curTick br) state
