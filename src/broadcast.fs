@@ -158,6 +158,32 @@ let doMasters state =
               (Return.singleton state)
        )
   |> optionDefault (state, [])
+
+let removeNode rid state =
+  state.myId
+  |> Option.map
+       (fun id ->
+         let peerBuckets = id.peers in
+         state.broadcasts
+         |> Map.toSeq
+         |> Seq.map snd
+         |> Seq.fold
+              (fun st br ->
+                Return.andThen
+                  (fun st ->
+                    BroadcastInstance.removeNode rid br
+                    |> Return.map
+                         (fun br ->
+                           { st with
+                               broadcasts = Map.add br.channel br st.broadcasts
+                           }
+                         )
+                  )
+                  st
+              )
+              (Return.singleton state)
+       )
+  |> optionDefault (state, [])
   
 let rec update msg state =
   let _ = printfn "b %A" msg in
@@ -215,6 +241,7 @@ let rec update msg state =
             in
             let newId = { id with peers = kb } in
             ({ state with myId = Some newId }, [])
+            |> Return.andThen (removeNode oldNode)
             |> Return.andThen doMasters
           )
      |> optionDefault (state, [])

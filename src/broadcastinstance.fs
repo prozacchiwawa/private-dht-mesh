@@ -122,6 +122,12 @@ let doMasters (id : string) (peers : string array) br =
   in
   ({br with masters = Set.ofSeq peers }, pings)
   
+let removeNode nid br =
+  ({ br with
+       masters = Set.remove nid br.masters ;
+       peers = Map.remove nid br.peers
+   }, [])
+
 let receivePacket id tick msg br : (BroadcastInstance<'peer> * SideEffect<'peer> list) =
   match msg with
   | Ping msg ->

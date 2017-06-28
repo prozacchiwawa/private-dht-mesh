@@ -20,7 +20,17 @@ type BIter =
   { broadcast : Broadcast.State<string>
   ; events : SideEffect<string> list
   }
-            
+
+let countentries seq =
+  Seq.fold
+    (fun m e ->
+      match Map.tryFind e m with
+      | Some v -> Map.add e (v + 1) m
+      | None -> Map.add e 1 m
+    )
+    Map.empty
+    seq
+
 let rec runIter (l : IterateAction list) (b : BIter) : BIter =
   match l with
   | [] -> b
@@ -452,5 +462,94 @@ let tests : Test list =
           massert.ok ((6 * (Seq.length messagesSet)) = (List.length messagesList))
         in
         let _ = massert.ok (messagesSet = wantMessages) in        
+        donef ()
+  ; "should respond properly to a removed node" =>
+      fun donef ->
+        let keys =
+          seq { 0..2 }
+          |> Seq.map string
+          |> Seq.map BroadcastData.stringKey
+          |> Array.ofSeq
+        in
+        let broadcasts =
+          [ ( keys.[0]
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId keys.[0])
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[2])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( keys.[1]
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId keys.[1])
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[2])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( keys.[2]
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId keys.[2])
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[1])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ] |> Map.ofSeq |> ref
+        in
+        let results = ref [] in
+        for i in 0 .. 299 do
+          let msgs =
+            if (i - 20) % 100 = 0 then
+              [ (keys.[0], Do (InUserMessage ("foo", sprintf "0 %d" i)))
+              ; (keys.[1], Do (InUserMessage ("foo", sprintf "1 %d" i)))
+              ; (keys.[2], Do (InUserMessage ("foo", sprintf "2 %d" i)))
+              ; (keys.[0], Wait 1)
+              ; (keys.[1], Wait 1)
+              ; (keys.[2], Wait 1)
+              ]
+            else if i = 40 then
+              [ (keys.[0], Do (RemoveNode keys.[2]))
+              ; (keys.[1], Do (RemoveNode keys.[2]))
+              ; (keys.[2], Do (RemoveNode keys.[0]))
+              ; (keys.[2], Do (RemoveNode keys.[1]))
+              ; (keys.[0], Wait 1)
+              ; (keys.[1], Wait 1)
+              ; (keys.[2], Wait 1)
+              ]
+            else
+              [(keys.[0], Wait 1); (keys.[1], Wait 1); (keys.[2], Wait 1)]
+          in
+          let (r,b) = applyMessages msgs !results !broadcasts in
+          results := r ;
+          broadcasts := b
+        done ;
+        let messagesList =
+          !results
+          |> List.map (fun m -> m.data)
+        in
+        let messagesSet = Set.ofSeq messagesList in
+        let wantMessages =
+          [ ("0 120",2)
+          ; ("0 20",3)
+          ; ("0 220",2)
+          ; ("1 120",2)
+          ; ("1 20",3)
+          ; ("1 220",2)
+          ; ("2 120",1)
+          ; ("2 20",3)
+          ; ("2 220",1)
+          ] |> List.ofSeq
+        in
+        let entryCounts = countentries messagesList |> Map.toSeq |> List.ofSeq in
+        let _ = printfn "raw-recv: %A" entryCounts in
+        let _ = massert.ok (entryCounts = wantMessages) in
         donef ()
   ]
