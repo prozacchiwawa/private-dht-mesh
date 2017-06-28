@@ -324,4 +324,133 @@ let tests : Test list =
         in
         let _ = massert.ok (messagesSet = wantMessages) in
         donef ()
+  ; "should complete a broadcast via an indirect (type 3) message" =>
+      fun donef ->
+        let keys =
+          seq { 0..5 }
+          |> Seq.map string
+          |> Seq.map BroadcastData.stringKey
+          |> Array.ofSeq
+        in
+        let broadcasts =
+          [ ( keys.[0]
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId keys.[0])
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[2])
+                   ; Do (AddNode keys.[3])
+                   ; Do (AddNode keys.[4])
+                   ; Do (AddNode keys.[5])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( keys.[1]
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId keys.[1])
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[2])
+                   ; Do (AddNode keys.[3])
+                   ; Do (AddNode keys.[4])
+                   ; Do (AddNode keys.[5])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( keys.[2]
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId keys.[2])
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[3])
+                   ; Do (AddNode keys.[4])
+                   ; Do (AddNode keys.[5])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( keys.[3]
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId keys.[3])
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[2])
+                   ; Do (AddNode keys.[4])
+                   ; Do (AddNode keys.[5])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( keys.[4]
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId keys.[4])
+                   ; Do (AddNode keys.[3])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ; ( keys.[5]
+            , Broadcast.init 100
+              |> startIter
+              |> runIter
+                   [ Do (SetId keys.[5])
+                   ; Do (AddNode keys.[0])
+                   ; Do (AddNode keys.[1])
+                   ; Do (AddNode keys.[2])
+                   ; Do (AddNode keys.[3])
+                   ; Do (AddNode keys.[4])
+                   ; Do (JoinBroadcast "foo")
+                   ]
+            )
+          ] |> Map.ofSeq |> ref
+        in
+        let results = ref [] in
+        for i in 0 .. 299 do
+          let msgs =
+            if (i - 20) % 100 = 0 then
+              [ (keys.[0], Do (InUserMessage ("foo", sprintf "0 %d" i)))
+              ; (keys.[1], Do (InUserMessage ("foo", sprintf "1 %d" i)))
+              ; (keys.[2], Do (InUserMessage ("foo", sprintf "2 %d" i)))
+              ; (keys.[3], Do (InUserMessage ("foo", sprintf "3 %d" i)))
+              ; (keys.[4], Do (InUserMessage ("foo", sprintf "4 %d" i)))
+              ; (keys.[5], Do (InUserMessage ("foo", sprintf "5 %d" i)))
+              ; (keys.[0], Wait 1)
+              ; (keys.[1], Wait 1)
+              ; (keys.[2], Wait 1)
+              ; (keys.[3], Wait 1)
+              ; (keys.[4], Wait 1)
+              ; (keys.[5], Wait 1)
+              ]
+            else
+              [(keys.[0], Wait 1); (keys.[1], Wait 1); (keys.[2], Wait 1);
+               (keys.[3], Wait 1); (keys.[4], Wait 1); (keys.[5], Wait 1)]
+          in
+          let (r,b) = applyMessages msgs !results !broadcasts in
+          results := r ;
+          broadcasts := b
+        done ;
+        let messagesList =
+          !results
+          |> List.map (fun m -> m.data)
+        in
+        let messagesSet = Set.ofSeq messagesList in
+        let wantMessages =
+          ["0 20";"1 20";"2 20";"0 120";"1 120";"2 120";"0 220";"1 220";"2 220";
+           "3 20";"4 20";"5 20";"3 120";"4 120";"5 120";"3 220";"4 220";"5 220"]
+          |> Set.ofSeq
+        in
+        let gotlen = List.length messagesList in
+        let setlen = Seq.length messagesSet in
+        let _ = printfn "results: got %A want %A" gotlen setlen in
+        let _ = printfn "raw-recv: %A" messagesList in
+        let _ =
+          massert.ok ((6 * (Seq.length messagesSet)) = (List.length messagesList))
+        in
+        let _ = massert.ok (messagesSet = wantMessages) in        
+        donef ()
   ]
