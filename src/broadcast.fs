@@ -4,6 +4,7 @@ open Util
 open Buffer
 open RBTree
 open Return
+open KBucket
 open BroadcastData
 open BroadcastInstance
 
@@ -36,18 +37,35 @@ open BroadcastInstance
  * packets toward masters.
  *)
    
+type IDAndBuckets<'peer> =
+  { id : 'peer
+  ; peers : KBucket<Buffer,Buffer>
+  }
+
 type State<'peer when 'peer : comparison> =
   { curTick : int
-  ; myId : 'peer option
+  ; myId : IDAndBuckets<'peer> option
   ; inactiveTimeout : int
   ; broadcasts : Map<string, BroadcastInstance<'peer>>
   }
 
+let kbOps =
+  { distance = KBucket.defaultDistance
+  ; nodeId = id
+  ; arbiter = fun a b -> a
+  ; keyLength = Buffer.length
+  ; keyNth = Buffer.at
+  ; idEqual = Buffer.equal
+  ; idLess = fun a b -> Buffer.compare a b < 0
+  }
+
+let numMasters = 4
+  
 let init inactiveTimeout =
   { curTick = 0 ;
     myId = None ;
     inactiveTimeout = inactiveTimeout ;
-    broadcasts = Map.empty
+    broadcasts = Map.empty ;
   }
 
 let peersOfChannel channel state =
@@ -78,19 +96,55 @@ let withChannel channel f state =
   let state = { state with broadcasts = Map.add channel br state.broadcasts } in
   match state.myId with
   | Some id ->
-     f id state br
+     f id.id state br
      |> Return.map
           (fun br ->
             { state with broadcasts = Map.add br.channel br state.broadcasts }
           )
   | None -> Return.singleton state
+
+let doMasters state =
+  state.myId
+  |> Option.map
+       (fun id ->
+         let peerBuckets = id.peers in
+         state.broadcasts
+         |> Map.toSeq
+         |> Seq.map snd
+         |> Seq.fold
+              (fun st br ->
+                let channelId = stringKey br.channel in
+                let peers =
+                  KBucket.closest
+                    kbOps
+                    peerBuckets
+                    (Buffer.fromString channelId "hex")
+                    numMasters
+                    None
+                  |> Array.map (Buffer.toString "hex")
+                in
+                Return.andThen
+                  (fun st ->
+                    BroadcastInstance.doMasters id.id peers br
+                    |> Return.map
+                         (fun br ->
+                           { st with
+                               broadcasts = Map.add br.channel br st.broadcasts
+                           }
+                         )
+                  )
+                  st
+              )
+              (Return.singleton state)
+       )
+  |> optionDefault (state, [])
   
 let update msg state =
   let _ = printfn "b %A" msg in
   match msg with
   | SetId id ->
      let _ = printfn "set id %A?" id in
-     ({ state with myId = Some id }, [])
+     ({ state with myId = Some { id = id ; peers = KBucket.init (Buffer.fromString id "hex") } }, [])
   | JoinBroadcast c ->
      withChannel
        c (fun id st br -> BroadcastInstance.doIntroduction id st.curTick br) state
@@ -118,5 +172,30 @@ let update msg state =
               state
           )
      |> optionDefault (state, [])
+  | AddNode newNode ->
+     state.myId
+     |> Option.map
+          (fun id ->
+            let (kb,eff) =
+              KBucket.add
+                kbOps id.peers (Buffer.fromString newNode "hex") None
+            in
+            let newId = { id with peers = kb } in
+            ({ state with myId = Some newId }, [])
+            |> Return.andThen doMasters
+          )
+     |> optionDefault (state, [])
+  | RemoveNode oldNode ->
+     state.myId
+     |> Option.map
+          (fun id ->
+            let (kb,eff) =
+              KBucket.remove
+                kbOps id.peers (Buffer.fromString oldNode "hex") None
+            in
+            let newId = { id with peers = kb } in
+            ({ state with myId = Some newId }, [])
+            |> Return.andThen doMasters
+          )
+     |> optionDefault (state, [])
   | _ -> (state, [])
-      

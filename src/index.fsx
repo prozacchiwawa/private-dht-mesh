@@ -133,7 +133,9 @@ let main argv : unit =
              (fun evt ->
                match evt with
                | NodeAdded nid ->
-                  bserviceBus.push (BroadcastService.AddNode nid)
+                  bserviceBus.push (BroadcastService.AddNode (Buffer.toString "hex" nid.id))
+               | NodeRemoved nid ->
+                  bserviceBus.push (BroadcastService.RemoveNode (Buffer.toString "hex" nid.id))
                | QueryPerform (qid, nid, json) ->
                   let body = Serialize.jsonObject [| |] in
                   let _ = toDHTBus.push (QueryReply (qid, nid, body)) in

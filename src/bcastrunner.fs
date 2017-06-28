@@ -13,7 +13,8 @@ type InternalMsg<'ws> =
   | NewSocket of (string * 'ws)
   | SocketClosed of string
   | WSReceive of (string * Buffer)
-  | AddNode of NodeIdent
+  | AddNode of string
+  | RemoveNode of string
   | RpcRequestIn of (string * Serialize.Json)
   | RpcSuccess of (string * Serialize.Json)
   | RpcFailure of string
@@ -185,7 +186,7 @@ let doBroadcastMsg msg state =
     (fun s e -> applyBroadcastEff e s)
     { state with broadcast = b }
     e
-  
+
 let doPublish wsid pub subj replyto bytesStr state =
   let mt = (Util.parseInt bytesStr, Map.tryFind wsid state.clients) in
   let _ = printfn "doPublish1 %A" mt in
@@ -342,6 +343,10 @@ let update msg state =
   match Util.log "bcast-msg" msg with
   | SetId id ->
      doBroadcastMsg (BroadcastData.SetId id) state
+  | AddNode nid ->
+     doBroadcastMsg (BroadcastData.AddNode nid) state
+  | RemoveNode nid ->
+     doBroadcastMsg (BroadcastData.RemoveNode nid) state
   | NewSocket (wsid,ws) ->
      newSocket wsid ws state
   | SocketClosed wsid ->

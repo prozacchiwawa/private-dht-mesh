@@ -86,18 +86,20 @@ let rec applyMessages msgs results broadcasts =
         applyMessages m results nbroadcasts
      | None -> applyMessages tl results broadcasts
   | _ -> (results, broadcasts)
-                        
+
 let tests : Test list =
   [ "should be creatable" =>
       fun donef -> let i = Broadcast.init 3 in donef ()
   ; "should send a datagram when we join a channel" =>
       fun donef ->
+        let ourNode = BroadcastData.stringKey "our-node" in
+        let theirNode = BroadcastData.stringKey "their-node" in
         let res =
           Broadcast.init 3
           |> startIter
           |> runIter
-               [ Do (SetId "our-node")
-               ; Do (SetMasters ("foo",["their-node"]))
+               [ Do (SetId ourNode)
+               ; Do (SetMasters ("foo",[theirNode]))
                ; Wait 1
                ; Do (JoinBroadcast "foo")
                ; Wait 5
@@ -117,33 +119,38 @@ let tests : Test list =
         donef ()
   ; "should broadcast a datagram to 3 peers under ideal conditions" =>
       fun donef ->
+        let keys =
+          seq { 0..2 }
+          |> Seq.map string
+          |> Seq.map BroadcastData.stringKey
+          |> Array.ofSeq
+        in
         let broadcasts =
-          [
-            ( "0"
+          [ ( keys.[0]
             , Broadcast.init 100
               |> startIter
               |> runIter
-                   [ Do (SetId "0")
+                   [ Do (SetId keys.[0])
                    ; Do (JoinBroadcast "foo")
-                   ; Do (SetMasters ("foo",["0"]))
+                   ; Do (SetMasters ("foo",[keys.[0]]))
                    ]
             )
-          ; ( "1"
+          ; ( keys.[1]
             , Broadcast.init 100
               |> startIter
               |> runIter
-                   [ Do (SetId "1")
+                   [ Do (SetId keys.[1])
                    ; Do (JoinBroadcast "foo")
-                   ; Do (SetMasters ("foo",["0"]))
+                   ; Do (SetMasters ("foo",[keys.[0]]))
                    ]
             )
-          ; ( "2"
+          ; ( keys.[2]
             , Broadcast.init 100
               |> startIter
               |> runIter
-                   [ Do (SetId "2")
+                   [ Do (SetId keys.[2])
                    ; Do (JoinBroadcast "foo")
-                   ; Do (SetMasters ("foo",["0"]))
+                   ; Do (SetMasters ("foo",[keys.[0]]))
                    ]
             )
           ] |> Map.ofSeq |> ref
@@ -152,15 +159,15 @@ let tests : Test list =
         for i in 0 .. 299 do
           let msgs =
             if (i - 20) % 100 = 0 then
-              [ ("0", Do (InUserMessage ("foo", sprintf "0 %d" i)))
-              ; ("1", Do (InUserMessage ("foo", sprintf "1 %d" i)))
-              ; ("2", Do (InUserMessage ("foo", sprintf "2 %d" i)))
-              ; ("0", Wait 1)
-              ; ("1", Wait 1)
-              ; ("2", Wait 1)
+              [ (keys.[0], Do (InUserMessage ("foo", sprintf "0 %d" i)))
+              ; (keys.[1], Do (InUserMessage ("foo", sprintf "1 %d" i)))
+              ; (keys.[2], Do (InUserMessage ("foo", sprintf "2 %d" i)))
+              ; (keys.[0], Wait 1)
+              ; (keys.[1], Wait 1)
+              ; (keys.[2], Wait 1)
               ]
             else
-              [("0", Wait 1); ("1", Wait 1); ("2", Wait 1)]
+              [(keys.[0], Wait 1); (keys.[1], Wait 1); (keys.[2], Wait 1)]
           in
           let (r,b) = applyMessages msgs !results !broadcasts in
           results := r ;
@@ -183,59 +190,64 @@ let tests : Test list =
         donef ()
   ; "should broadcast a datagram to 6 peers under ideal conditions" =>
       fun donef ->
+        let keys =
+          seq { 0..5 }
+          |> Seq.map string
+          |> Seq.map BroadcastData.stringKey
+          |> Array.ofSeq
+        in
         let broadcasts =
-          [
-            ( "0"
+          [ ( keys.[0]
             , Broadcast.init 100
               |> startIter
               |> runIter
-                   [ Do (SetId "0")
-                   ; Do (SetMasters ("foo",["2";"3"]))
+                   [ Do (SetId keys.[0])
+                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
-          ; ( "1"
+          ; ( keys.[1]
             , Broadcast.init 100
               |> startIter
               |> runIter
-                   [ Do (SetId "1")
-                   ; Do (SetMasters ("foo",["2";"3"]))
+                   [ Do (SetId keys.[1])
+                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
-          ; ( "2"
+          ; ( keys.[2]
             , Broadcast.init 100
               |> startIter
               |> runIter
-                   [ Do (SetId "2")
-                   ; Do (SetMasters ("foo",["2";"3"]))
+                   [ Do (SetId keys.[2])
+                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
-          ; ( "3"
+          ; ( keys.[3]
             , Broadcast.init 100
               |> startIter
               |> runIter
-                   [ Do (SetId "3")
-                   ; Do (SetMasters ("foo",["2";"3"]))
+                   [ Do (SetId keys.[3])
+                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
-          ; ( "4"
+          ; ( keys.[4]
             , Broadcast.init 100
               |> startIter
               |> runIter
-                   [ Do (SetId "4")
-                   ; Do (SetMasters ("foo",["2";"3"]))
+                   [ Do (SetId keys.[4])
+                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
-          ; ( "5"
+          ; ( keys.[5]
             , Broadcast.init 100
               |> startIter
               |> runIter
-                   [ Do (SetId "5")
-                   ; Do (SetMasters ("foo",["2";"3"]))
+                   [ Do (SetId keys.[5])
+                   ; Do (SetMasters ("foo",[keys.[2];keys.[3]]))
                    ; Do (JoinBroadcast "foo")
                    ]
             )
@@ -245,22 +257,22 @@ let tests : Test list =
         for i in 0 .. 299 do
           let msgs =
             if (i - 20) % 100 = 0 then
-              [ ("0", Do (InUserMessage ("foo", sprintf "0 %d" i)))
-              ; ("1", Do (InUserMessage ("foo", sprintf "1 %d" i)))
-              ; ("2", Do (InUserMessage ("foo", sprintf "2 %d" i)))
-              ; ("3", Do (InUserMessage ("foo", sprintf "3 %d" i)))
-              ; ("4", Do (InUserMessage ("foo", sprintf "4 %d" i)))
-              ; ("5", Do (InUserMessage ("foo", sprintf "5 %d" i)))
-              ; ("0", Wait 1)
-              ; ("1", Wait 1)
-              ; ("2", Wait 1)
-              ; ("3", Wait 1)
-              ; ("4", Wait 1)
-              ; ("5", Wait 1)
+              [ (keys.[0], Do (InUserMessage ("foo", sprintf "0 %d" i)))
+              ; (keys.[1], Do (InUserMessage ("foo", sprintf "1 %d" i)))
+              ; (keys.[2], Do (InUserMessage ("foo", sprintf "2 %d" i)))
+              ; (keys.[3], Do (InUserMessage ("foo", sprintf "3 %d" i)))
+              ; (keys.[4], Do (InUserMessage ("foo", sprintf "4 %d" i)))
+              ; (keys.[5], Do (InUserMessage ("foo", sprintf "5 %d" i)))
+              ; (keys.[0], Wait 1)
+              ; (keys.[1], Wait 1)
+              ; (keys.[2], Wait 1)
+              ; (keys.[3], Wait 1)
+              ; (keys.[4], Wait 1)
+              ; (keys.[5], Wait 1)
               ]
             else
-              [("0", Wait 1); ("1", Wait 1); ("2", Wait 1);
-               ("3", Wait 1); ("4", Wait 1); ("5", Wait 1)]
+              [(keys.[0], Wait 1); (keys.[1], Wait 1); (keys.[2], Wait 1);
+               (keys.[3], Wait 1); (keys.[4], Wait 1); (keys.[5], Wait 1)]
           in
           let (r,b) = applyMessages msgs !results !broadcasts in
           results := r ;

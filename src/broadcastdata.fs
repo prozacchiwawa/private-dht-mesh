@@ -36,11 +36,14 @@ type Msg<'peer> =
   | JoinBroadcast of string
   | LeaveBroadcast of string
   | SetMasters of (string * 'peer list)
+  | AddNode of string
+  | RemoveNode of string
                     
 type SideEffect<'peer> =
   | BroadcastReady of string
   | OutPacket of ('peer * Serialize.Json)
   | UserMessage of UserMsg
+  | RequestMasters of string
 
 let encodePacket msg =
   match msg with

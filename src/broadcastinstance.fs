@@ -113,6 +113,19 @@ let doPublish id tick text br =
       ({ peer with bseq = s }, List.concat [toMasters;toPeers;toOwnSubs])
     )
     { br with seq = br.seq + 1 }
+
+let doMasters (id : string) (peers : string array) br =
+  let newMasters = Array.filter (fun p -> not (Set.contains p br.masters)) peers in
+  let pings = 
+    Seq.map
+      (fun p ->
+        OutPacket
+          (p,encodePacket (Ping { op = id ; channel = br.channel ; peer = id }))
+      )
+      newMasters
+    |> List.ofSeq
+  in
+  ({br with masters = Set.ofSeq newMasters }, pings)
   
 let receivePacket id tick msg br : (BroadcastInstance<'peer> * SideEffect<'peer> list) =
   match msg with

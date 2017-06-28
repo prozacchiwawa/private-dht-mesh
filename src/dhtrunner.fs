@@ -40,7 +40,9 @@ type OutputEventDHT =
   | SaveComplete of string
   (* Report a new node *)
   | NodeAdded of NodeIdent
-
+  (* Report a removed node *)
+  | NodeRemoved of NodeIdent
+                 
 (* Set up the DHT system as an autonomous actor in our system *)
 let runDHT
       (args : string array)
@@ -146,7 +148,8 @@ let runDHT
                resultBus.push (SendDatagram (json,nid))
             | DHTRPC.NodeAdded nid ->
                resultBus.push (NodeAdded nid)
-            | DHTRPC.NodeRemoved nid -> ()
+            | DHTRPC.NodeRemoved nid ->
+               resultBus.push (NodeRemoved nid)
           )
           events
         |> ignore

@@ -9,7 +9,8 @@ open BCastRunner
 
 type InputMsg =
   | NoOp
-  | AddNode of NodeIdent
+  | AddNode of string
+  | RemoveNode of string
   | RpcRequestIn of (string * Serialize.Json)
   | RpcRequestDone of (string * Serialize.Json)
   | RpcRequestFail of string
