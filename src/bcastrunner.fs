@@ -179,6 +179,7 @@ let applyBroadcastEff eff state =
        (fun state evt -> { state with events = evt :: state.events })
        state
        outmsgs
+  | _ -> state
   
 let doBroadcastMsg msg state =
   let (b,e) = Broadcast.update msg state.broadcast in
