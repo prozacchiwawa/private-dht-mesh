@@ -179,6 +179,12 @@ let applyBroadcastEff eff state =
        (fun state evt -> { state with events = evt :: state.events })
        state
        outmsgs
+  | BroadcastReady channel ->
+     let chankey = BroadcastData.stringKey channel in
+     let body = Serialize.jsonObject [| |] in
+     (* Emit a throwaway request to trigger a find_node on the channel key,
+        which will cause us to drill down to the best masters. *)
+     { state with events = (RpcRequest (chankey,body)) :: state.events }
   | _ -> state
   
 let doBroadcastMsg msg state =
