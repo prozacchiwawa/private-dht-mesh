@@ -39,3 +39,20 @@ let get_interfaces_list _ : Q.Promise<FlatInterfaceDesc array, string> =
       )
   in
   f.promise
+
+type NJSTraceroute = Unused1
+type TraceHop =
+  { hop : int
+  ; ip : string
+  ; rtt1 : string
+  }
+                   
+[<Emit("(function() { var njt = require('nodejs-traceroute'); return njt; })()")>]
+let traceroute_module_ : unit -> NJSTraceroute = fun _ -> failwith "JS"
+
+let traceroute_module = traceroute_module_ ()
+
+[<Emit("(function(njt,host) { var tracer = new njt(); var q = require('q'); var d = q.defer(); var res = []; tracer.on('close', function() { d.resolve(res); }); tracer.on('hop', function(h) { res.push(h); }); tracer.trace(host); return d.promise; })($0,$1)")>]
+let trace_ : NJSTraceroute -> string -> Q.Promise<TraceHop list,unit> = fun t h -> failwith "JS"
+
+let trace = trace_ traceroute_module
