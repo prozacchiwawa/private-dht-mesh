@@ -3,22 +3,30 @@ module Forward
 open Util
 open Queue
 
-type Node =
-  { local : bool
-  ; target : string
-  ; id : string
-  }
-
-type ConnGraph =
-  { nodes : Map<string,Node>
+type ConnGraph<'node> =
+  { nodes : Map<string,'node>
   ; edges : Map<string, Set<string> >
   }
 
 let init () =
   { nodes = Map.ofSeq [] ; edges = Map.ofSeq [] }
 
-let addNode n g =
-  { g with nodes = Map.add n.id n g.nodes }
+let addNode id (n : 'node) g =
+  { g with nodes = Map.add id n g.nodes }
+
+let removeNode n g =
+  let edgesWithoutNode n =
+    Map.toSeq g.edges
+    |> Seq.map
+         (fun (from,tos) ->
+           (from, Seq.filter (fun t -> t <> n) tos |> Set.ofSeq)
+         )
+    |> Map.ofSeq
+  in
+  { g with
+      nodes = Map.remove n g.nodes ;
+      edges = edgesWithoutNode n
+  }
 
 let addEdge id1 id2 g =
   let edges0 =

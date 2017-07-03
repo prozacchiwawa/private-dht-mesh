@@ -47,8 +47,9 @@ type It = string * (DoneF -> unit)
 
 let (=>) (a : string) (b : 'b) : (string * 'b) = (a,b)
 
-let basicNodeA = { local = true ; target = "169.254.1.2" ; id = "testA" }
-let basicNodeB = { local = true ; target = "169.254.1.3" ; id = "testB" }
+type ForwardNode = { target : string ; id : string }
+let basicNodeA = { target = "169.254.1.2" ; id = "testA" }
+let basicNodeB = { target = "169.254.1.3" ; id = "testB" }
 
 let final f _ = f ()
 
@@ -60,15 +61,15 @@ let tests : (string * (It list)) list =
           fun donef ->
             let i = Forward.init () in
             begin
-              i |> Forward.addNode basicNodeA |> final donef
+              i |> Forward.addNode basicNodeA.id basicNodeA |> final donef
             end
       ; "should allow addition of edges" =>
           fun donef ->
             let i = Forward.init () in
             begin
               i
-              |> Forward.addNode basicNodeA
-              |> Forward.addNode basicNodeB
+              |> Forward.addNode basicNodeA.id basicNodeA
+              |> Forward.addNode basicNodeB.id basicNodeB
               |> Forward.addEdge basicNodeA.id basicNodeB.id
               |> final donef 
             end
@@ -76,8 +77,8 @@ let tests : (string * (It list)) list =
           fun donef ->
             let i =
               Forward.init ()
-              |> Forward.addNode basicNodeA
-              |> Forward.addNode basicNodeB
+              |> Forward.addNode basicNodeA.id basicNodeA
+              |> Forward.addNode basicNodeB.id basicNodeB
               |> Forward.addEdge basicNodeA.id basicNodeB.id
             in
             begin
