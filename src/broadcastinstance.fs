@@ -5,13 +5,19 @@ open BroadcastData
      
 type BroadcastPeer<'peer> =
   { name : 'peer
-  (* The sequence number of the most recent datagram sent to this peer *)
+  (* The sequence number of the most recent datagram sent from the indicated peer
+   * and received by this peer. *)
   ; bseq : int
+  (* The last known contact with the indicated peer in Broadcast ticks. *)
   ; lastping : int
   }
 
 type BroadcastInstance<'peer when 'peer : comparison> =
   { channel : string
+  (* The masters of a broadcast are responsible for forwarding broadcast datagrams
+   * to all broadcast peers.  Their peer lists are supposed to be close to
+   * authoritative.
+   *)
   ; masters : Set<'peer>
   ; lastseen : int
   ; seq : int
@@ -36,6 +42,10 @@ let defChannel channel tick =
     seq = 0
   }
 
+(* Given the sequence m of masters, ensure that br knows about those masters.
+ * As a side effect, emit pings to masters that were not previously in the
+ * broadcast's master set.
+ *)
 let setMasters id tick m br =
   let effects =
     if br.lastintroduced <> tick && (Seq.length m) <> 0 then
@@ -51,8 +61,21 @@ let setMasters id tick m br =
   in
   let _ = printfn "setMasters %A" m in
   ({ br with lastintroduced = tick ; masters = m |> Set.ofSeq }, effects)
-  
-let withPeer tick p f br =
+
+(* Given a tick and a peer name p, lookup or create the indicated peer indicating
+ * a last contact instant of tick if created.
+ *
+ * Apply f peer and broadcast, and update the peer in br.
+ *
+ * Transforms a peer in br by f and resets the peer in br's collection.
+ *)
+let withPeer
+      tick
+      p
+      (f : BroadcastPeer<'peer> ->
+           BroadcastInstance<'peer> ->
+           (BroadcastPeer<'peer> * SideEffect<'peer> list))
+      (br : BroadcastInstance<'peer>) =
   let defaultPeer = (initPeer tick p) in
   let peer = Map.tryFind p br.peers |> optionDefault defaultPeer in
   let br = { br with peers = Map.add peer.name peer br.peers } in
@@ -60,20 +83,28 @@ let withPeer tick p f br =
   |> Return.map
        (fun newPeer -> { br with peers = Map.add newPeer.name newPeer br.peers })
 
+(* Emit introductions to new broadcasts.  Signal ready if we're communicating with
+ * something.
+ *)
 let doIntroduction id tick br =
   let effects = 
     Seq.map
       (fun p ->
-        OutPacket (p,encodePacket (Ping { op = id ; channel = br.channel ; peer = id }))
+        OutPacket
+          (p,encodePacket (Ping { op = id ; channel = br.channel ; peer = id }))
       )
       br.masters
     |> List.ofSeq
   in
   if List.length effects <> 0 then
-    ({ br with lastintroduced = tick }, List.concat [[BroadcastReady br.channel];effects])
+    ( { br with lastintroduced = tick }
+    , List.concat [[BroadcastReady br.channel];effects]
+    )
   else
     (br, [])
 
+(* Publish a message to the channel.
+ *)
 let doPublish id tick text br =
   let s = br.seq in
   let toOwnSubs = [UserMessage { channel = br.channel ; data = text }] in
@@ -82,7 +113,17 @@ let doPublish id tick text br =
     |> Seq.filter (fun m -> m <> id)
     |> Seq.map
          (fun m ->
-           [ OutPacket (m, encodePacket (Primary { seq = s ; peer = id ; channel = br.channel ; data = text }))
+           [ OutPacket
+               ( m
+               , encodePacket
+                   (Primary
+                      { seq = s
+                      ; peer = id
+                      ; channel = br.channel
+                      ; data = text
+                      }
+                   )
+               )
            ]
          )
     |> Seq.concat
@@ -96,7 +137,18 @@ let doPublish id tick text br =
       |> Seq.filter (fun m -> m <> id)
       |> Seq.map
            (fun m ->
-             OutPacket (m, encodePacket (Delivery { seq = s ; peer = id ; channel = br.channel ; data = text ; op = id }))
+             OutPacket
+               ( m
+               , encodePacket
+                   (Delivery
+                      { seq = s
+                      ; peer = id
+                      ; channel = br.channel
+                      ; data = text
+                      ; op = id
+                      }
+                   )
+               )
            )
       |> List.ofSeq
     else
@@ -128,7 +180,8 @@ let removeNode nid br =
        peers = Map.remove nid br.peers
    }, [])
 
-let receivePacket id tick msg br : (BroadcastInstance<'peer> * SideEffect<'peer> list) =
+let receivePacket
+      id tick msg br : (BroadcastInstance<'peer> * SideEffect<'peer> list) =
   match msg with
   | Ping msg ->
      (* Ping from this host *)
@@ -144,7 +197,16 @@ let receivePacket id tick msg br : (BroadcastInstance<'peer> * SideEffect<'peer>
              |> Seq.filter (fun m -> m <> id)
              |> Seq.map
                   (fun m ->
-                    OutPacket (m, encodePacket (Ping { op = msg.op ; peer = id ; channel = br.channel }))
+                    OutPacket
+                      ( m
+                      , encodePacket
+                          (Ping
+                             { op = msg.op
+                             ; peer = id
+                             ; channel = br.channel
+                             }
+                          )
+                      )
                   )
              |> List.ofSeq
            in
