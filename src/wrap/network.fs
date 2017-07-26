@@ -40,11 +40,24 @@ let get_interfaces_list _ : Q.Promise<FlatInterfaceDesc array, string> =
   in
   f.promise
 
+let convertRtt s =
+  try
+    let split = Util.stringSplit " " s in
+    match split with
+    | [|n;"ns"|] -> (float n) / 1000000000.0
+    | [|n;"us"|] -> (float n) / 1000000.0
+    | [|n;"ms"|] -> (float n) / 1000.0
+    | [|n;"s"|] ->  (float n) / 1.0
+    | [|n|] -> float n
+    | _ -> 1.0
+  with _ ->
+    1.0
+  
 type NJSTraceroute = Unused1
 type TraceHop =
   { hop : int
   ; ip : string
-  ; rtt1 : string
+  ; rtt1 : float
   }
                    
 [<Emit("(function() { var njt = require('nodejs-traceroute'); return njt; })()")>]
@@ -52,7 +65,7 @@ let traceroute_module_ : unit -> NJSTraceroute = fun _ -> failwith "JS"
 
 let traceroute_module = traceroute_module_ ()
 
-[<Emit("(function(njt,host) { var tracer = new njt(); var q = require('q'); var d = q.defer(); var res = []; tracer.on('close', function() { d.resolve(res); }); tracer.on('hop', function(h) { res.push(h); }); tracer.trace(host); return d.promise; })($0,$1)")>]
-let trace_ : NJSTraceroute -> string -> Q.Promise<TraceHop list,unit> = fun t h -> failwith "JS"
+[<Emit("(function(njt,cvt,host) { var tracer = new njt(); var q = require('q'); var d = q.defer(); var res = []; tracer.on('close', function() { d.resolve(res); }); tracer.on('hop', function(h) { res.push({hop: h.hop, ip: h.ip, rtt1: cvt(h.rtt1)}); }); tracer.trace(host); return d.promise; })($0,$1,$2)")>]
+let trace_ : NJSTraceroute -> (string -> float) -> string -> Q.Promise<TraceHop list,unit> = fun t c h -> failwith "JS"
 
-let trace = trace_ traceroute_module
+let trace = trace_ traceroute_module convertRtt

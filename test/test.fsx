@@ -26,15 +26,18 @@
 #load "../src/broadcastinstance.fs"
 #load "../src/broadcast.fs"
 #load "../src/bcastrunner.fs"
+#load "../src/topology.fs"
 #load "./mocha.fs"
 #load "./kbuckettest.fs"
 #load "./testnet.fs"
 #load "./dhttest.fs"
 #load "./dhtvis.fs"
+#load "./trytrace.fs"
 #load "./testnetdht.fs"
 #load "./dhtrpctest.fs"
 #load "./broadcasttest.fs"
-
+#load "./tracetest.fs"
+ 
 open Util
 open Buffer
 open MochaTest
@@ -96,6 +99,7 @@ let tests : (string * (It list)) list =
   ; "dht" => DHTTest.tests
   ; "dhtrpc" => DHTRpcTest.tests
   ; "broadcast" => BroadcastTest.tests
+  ; "trace" => TraceTest.tests
   ]
 
 let _ =
