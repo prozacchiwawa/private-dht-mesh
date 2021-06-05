@@ -4,4 +4,4 @@ A mesh network created using a simple DHT implementation.  Endpoints may communi
 
 An example use of this dht network as a pubsub medium over NATS is in nats/wsquery.js
 
-As presented, it was built with fable 0.6, in which it ran as a standalone compiler and not as webpack plugin.
+As presented, it was built with fable-compiler@0.7, in which it ran as a standalone compiler and not as webpack plugin.
